@@ -1,0 +1,91 @@
+# ============================================================
+#  major-bump.yml — Incremento Manual de Versión MAJOR
+#
+#  Disparador: Solo manual (workflow_dispatch)
+#              Ir a GitHub → Actions → "Incremento MAJOR" → Run workflow
+#
+#  Usar cuando:
+#    - Hay cambios disruptivos (breaking changes) en la API
+#    - Se inicia una nueva etapa del proyecto incompatible
+#      con la anterior
+#    - El equipo acordó que esto es una v2/v3, etc.
+#
+#  ¿Qué hace?
+#    1. Incrementa MAJOR, resetea MINOR y PATCH a 0
+#       (ej: 1.4.2 → 2.0.0)
+#    2. Hace commit del bump a dev
+#    3. Crea un tag marcador de hito (milestone)
+#
+#  Rama destino: dev
+#  El próximo deploy a stg desde dev saldrá con la nueva versión MAJOR.
+# ============================================================
+
+name: Incremento MAJOR (Manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      motivo:
+        description: "¿Por qué es un incremento MAJOR? (resumen de cambios disruptivos)"
+        required: true
+        type: string
+      confirmar:
+        description: 'Escribe "si" para confirmar el incremento de versión MAJOR'
+        required: true
+        type: string
+
+jobs:
+  major-bump:
+    name: Incrementar versión MAJOR
+    runs-on: ubuntu-latest
+    environment: production     # Requiere aprobación — esto es importante
+    permissions:
+      contents: write
+
+    steps:
+      - name: Abortar si no se confirmó
+        if: github.event.inputs.confirmar != 'si'
+        run: |
+          echo "❌ Debes escribir 'si' en el campo de confirmación."
+          exit 1
+
+      - name: Checkout de dev
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: dev
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Configurar identidad de git
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Dar permisos al script
+        run: chmod +x .github/scripts/bump-version.sh
+
+      - name: Incrementar versión MAJOR
+        id: bump
+        run: .github/scripts/bump-version.sh major
+
+      - name: Commit del bump de versión
+        run: |
+          git add VERSION
+          git commit -m "chore(release): MAJOR bump a v${{ steps.bump.outputs.nueva_version }} — ${{ github.event.inputs.motivo }} [skip ci]"
+          git push origin dev
+
+      - name: Crear tag de hito
+        run: |
+          TAG="v${{ steps.bump.outputs.nueva_version }}-hito"
+          git tag "$TAG" -m "Inicio de versión MAJOR: ${{ github.event.inputs.motivo }}"
+          git push origin "$TAG"
+
+      - name: Resumen
+        run: |
+          echo "## 🎯 Versión MAJOR Incrementada" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Nueva versión:** v${{ steps.bump.outputs.nueva_version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Motivo:** ${{ github.event.inputs.motivo }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Ejecutado por:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "El próximo deploy a stg desde dev saldrá como v${{ steps.bump.outputs.nueva_version }}." >> $GITHUB_STEP_SUMMARY

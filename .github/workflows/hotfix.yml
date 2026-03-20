@@ -1,0 +1,217 @@
+# ============================================================
+#  hotfix.yml — Corrección de Emergencia en Producción
+#
+#  Disparadores:
+#    - Push a ramas `hotfix/*`
+#    - Pull Request mergeado apuntando a `main` desde `hotfix/*`
+#
+#  Flujo en dos fases:
+#    Fase 1 (push a la rama hotfix): Ejecutar CI, validar la corrección
+#    Fase 2 (PR mergeado a main):    Bump PATCH, publicar release,
+#                                    crear tag, sincronizar a dev
+#
+#  Ejemplo de versión en hotfix:
+#    Producción está en 1.2.0
+#    Se encuentra un bug crítico
+#    Branch hotfix/timeout-pago desde el tag v1.2.0
+#    Fix aplicado → merge a main → se convierte en 1.2.1
+#    Luego sincronizado a dev para que 1.3.0 también tenga el fix
+#
+#  Ramas:
+#    hotfix/* → ← rama de corrección de emergencia
+#    main     → ← destino del PR (producción)
+#    dev      → recibe sync automático del fix
+# ============================================================
+
+name: Hotfix — Corrección de Emergencia
+
+on:
+  push:
+    branches:
+      - "hotfix/**"
+  pull_request:
+    branches:
+      - main
+    types: [closed]   # Solo cuando el PR de hotfix es mergeado
+
+jobs:
+
+  # ============================================================
+  # FASE 1 — Validar el hotfix (en cada push a hotfix/*)
+  # ============================================================
+  validar-hotfix:
+    name: Validar Hotfix
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/hotfix/')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ejecutar validación del proyecto
+        run: echo "Reemplazar con los comandos de lint, pruebas y build del proyecto"
+        # Ejemplos Node.js:
+        #   npm run lint && npm run test && npm run build
+        # Ejemplos Python:
+        #   flake8 . && pytest && python setup.py build
+        # Ejemplos Java:
+        #   mvn verify
+        # Ejemplos .NET:
+        #   dotnet build && dotnet test
+
+      - name: Resumen
+        run: |
+          echo "## ✅ Hotfix Validado" >> $GITHUB_STEP_SUMMARY
+          echo "Rama: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "Commit: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Abrir un PR desde esta rama apuntando a \`main\` cuando esté listo para liberar." >> $GITHUB_STEP_SUMMARY
+
+  # ============================================================
+  # FASE 2 — Liberar el hotfix (cuando el PR a main es mergeado)
+  # ============================================================
+  liberar-hotfix:
+    name: Liberar Hotfix a Producción
+    runs-on: ubuntu-latest
+    environment: production     # Requiere aprobación, incluso para hotfixes
+    permissions:
+      contents: write
+    # Solo ejecutar cuando un PR de hotfix/* se mergea a main
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.merged == true &&
+      startsWith(github.event.pull_request.head.ref, 'hotfix/')
+
+    steps:
+      - name: Checkout de main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+          token: ${{ secrets.GH_PAT }}
+
+      # ----------------------------------------------------------
+      # Incrementar versión PATCH en el archivo VERSION
+      # ----------------------------------------------------------
+      - name: Configurar identidad de git
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Dar permisos al script
+        run: chmod +x .github/scripts/bump-version.sh
+
+      - name: Incrementar versión PATCH
+        id: bump
+        run: .github/scripts/bump-version.sh patch
+        # ej: 1.2.0 → 1.2.1
+
+      - name: Commit del bump de versión a main
+        run: |
+          git add VERSION
+          git commit -m "chore(hotfix): bump versión a ${{ steps.bump.outputs.nueva_version }} [skip ci]"
+          git push origin main
+
+      # ----------------------------------------------------------
+      # Build
+      # ----------------------------------------------------------
+      - name: Build
+        run: echo "Reemplazar con el comando de build del proyecto"
+        # Ejemplos:
+        #   Node.js → npm run build
+        #   Python  → python setup.py build
+        #   Java    → mvn package
+        #   .NET    → dotnet publish -c Release
+
+      # ----------------------------------------------------------
+      # Empaquetar artefacto del hotfix
+      # ----------------------------------------------------------
+      - name: Empaquetar artefacto
+        run: |
+          VERSION="${{ steps.bump.outputs.nueva_version }}"
+          NOMBRE="mi-solucion-v${VERSION}-hotfix"
+          mkdir -p "dist-package/${NOMBRE}"
+          cp -r dist/        "dist-package/${NOMBRE}/"
+          cp    README.md    "dist-package/${NOMBRE}/" 2>/dev/null || true
+          cp    .env.example "dist-package/${NOMBRE}/" 2>/dev/null || true
+          cd dist-package
+          zip -r "../${NOMBRE}.zip" "${NOMBRE}/"
+          cd ..
+          echo "ARTEFACTO_ZIP=${NOMBRE}.zip" >> "$GITHUB_ENV"
+          ls -lh "${NOMBRE}.zip"
+
+      # ----------------------------------------------------------
+      # Crear tag del release de hotfix
+      # ----------------------------------------------------------
+      - name: Crear tag de git
+        run: |
+          TAG="v${{ steps.bump.outputs.nueva_version }}"
+          git tag "$TAG" -m "Hotfix release $TAG"
+          git push origin "$TAG"
+          echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
+
+      # ----------------------------------------------------------
+      # Crear GitHub Release para el hotfix
+      # ----------------------------------------------------------
+      - name: Crear GitHub Release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs        = require('fs');
+            const version   = '${{ steps.bump.outputs.nueva_version }}';
+            const prTitulo  = '${{ github.event.pull_request.title }}';
+            const prRama    = '${{ github.event.pull_request.head.ref }}';
+            const zipPath   = '${{ env.ARTEFACTO_ZIP }}';
+
+            const { data: release } = await github.rest.repos.createRelease({
+              owner:      context.repo.owner,
+              repo:       context.repo.repo,
+              tag_name:   `v${version}`,
+              name:       `v${version} (hotfix)`,
+              body:       `## 🔥 Hotfix — v${version}\n\n**Rama:** \`${prRama}\`\n**Corrección:** ${prTitulo}\n\n**Liberado por:** @${{ github.actor }}\n**Fecha:** ${new Date().toISOString().split('T')[0]}`,
+              draft:      false,
+              prerelease: false
+            });
+
+            // Adjuntar artefacto
+            const zipContenido = fs.readFileSync(zipPath);
+            await github.rest.repos.uploadReleaseAsset({
+              owner:      context.repo.owner,
+              repo:       context.repo.repo,
+              release_id: release.id,
+              name:       zipPath,
+              data:       zipContenido,
+              headers: {
+                'content-type':   'application/zip',
+                'content-length': zipContenido.length
+              }
+            });
+
+            console.log(`Hotfix release creado: ${release.html_url}`);
+
+      # ----------------------------------------------------------
+      # CRÍTICO: Sincronizar hotfix de vuelta a dev
+      # Si se omite este paso, dev NO tendrá la corrección
+      # y reaparecerá en el próximo release.
+      # ----------------------------------------------------------
+      - name: Sincronizar hotfix a dev
+        run: |
+          git fetch origin dev
+          git checkout dev
+
+          # Mergear main (que ya incluye el hotfix) a dev
+          git merge main --no-ff -m "chore(hotfix): merge v${{ steps.bump.outputs.nueva_version }} de vuelta a dev [skip ci]"
+
+          git push origin dev
+          echo "✅ Hotfix v${{ steps.bump.outputs.nueva_version }} sincronizado a dev"
+
+      - name: Notificar Slack
+        if: always()
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "text": "${{ job.status == 'success' && '🔥✅' || '🔥❌' }} *Hotfix* v${{ steps.bump.outputs.nueva_version }} — ${{ job.status }}\nCorreción: ${{ github.event.pull_request.title }}\nLiberado por: ${{ github.actor }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

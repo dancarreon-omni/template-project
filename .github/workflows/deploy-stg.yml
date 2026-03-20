@@ -1,0 +1,153 @@
+# ============================================================
+#  deploy-stg.yml — Despliegue a Staging
+#
+#  Disparador: push a `dev` (es decir, cuando se mergea un PR)
+#
+#  ¿Qué hace?
+#    1. Incrementa la versión MINOR  (ej: 1.1.0 → 1.2.0) en el archivo VERSION
+#    2. Hace commit del bump de vuelta a dev
+#    3. Crea un tag de git  v1.2.0-stg  (para trazabilidad)
+#    4. Genera el build del proyecto (comando adaptable al lenguaje)
+#    5. Sube el artefacto como asset de GitHub Actions
+#
+#  Filosofía de versión:
+#    Cada vez que dev se actualiza (fin de sprint o features listas),
+#    se incrementa MINOR. Esto representa "nueva funcionalidad
+#    disponible para pruebas QA." El mismo número de versión
+#    viaja sin cambios hasta producción.
+#
+#  Ramas:
+#    feat/*     → Nueva funcionalidad
+#    fix/*      → Corrección de bugs
+#    revert/*   → Reversión de una feature excluida del release
+#    hotfix/*   → Corrección urgente de producción
+#    refactor/* → Reestructuración de código sin nueva funcionalidad
+#    release/*  → Rama de estabilización para un release específico
+#    chore/*    → Mantenimiento: dependencias, configuración, scripts
+#    dev      → ← integración (esta rama)
+#    stg      → Staging / QA
+#    preprod  → Pre-Producción
+#    main     → Producción
+# ============================================================
+
+name: Deploy — Staging (stg)
+
+on:
+  push:
+    branches:
+      - dev
+
+# Evitar que dos deploys de staging corran simultáneamente
+concurrency:
+  group: deploy-stg
+  cancel-in-progress: false   # No cancelar — poner en cola
+
+jobs:
+  deploy-stg:
+    name: Bump de Versión + Build para Staging
+    runs-on: ubuntu-latest
+    environment: stg            # Mapea al Entorno de GitHub (con sus secrets)
+    permissions:
+      contents: write           # Necesario para hacer push del commit de versión + tag
+
+    steps:
+      - name: Checkout de dev
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # Historial completo necesario para tagging
+          token: ${{ secrets.GH_PAT }}
+          # Usar un PAT (Personal Access Token) para que el commit
+          # pueda saltar las reglas de protección de rama.
+          # Guardarlo como secret del repositorio.
+
+      # ----------------------------------------------------------
+      # Correr pruebas sobre el código mergeado
+      # Adaptar el comando según el lenguaje del proyecto:
+      #   Node.js  → npm ci && npm run test
+      #   Python   → pip install -r requirements.txt && pytest
+      #   PHP      → composer install && ./vendor/bin/phpunit
+      #   Java     → mvn test  /  gradle test
+      #   .NET     → dotnet test
+      # ----------------------------------------------------------
+      - name: Ejecutar pruebas
+        run: npm run test
+
+      # ----------------------------------------------------------
+      # Incrementar versión MINOR
+      # ----------------------------------------------------------
+      - name: Configurar identidad de git
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Dar permisos al script
+        run: chmod +x .github/scripts/bump-version.sh
+
+      - name: Incrementar versión MINOR
+        id: bump
+        run: .github/scripts/bump-version.sh minor
+        # Output: nueva_version (ej: "1.2.0")
+
+      - name: Commit del bump de versión
+        run: |
+          git add VERSION
+          git commit -m "chore(release): bump versión a ${{ steps.bump.outputs.nueva_version }} [skip ci]"
+          git push origin dev
+
+      - name: Crear tag de git para stg
+        run: |
+          git tag "v${{ steps.bump.outputs.nueva_version }}-stg"
+          git push origin "v${{ steps.bump.outputs.nueva_version }}-stg"
+
+      # ----------------------------------------------------------
+      # Build
+      # ----------------------------------------------------------
+      - name: Build para staging
+        run: npm run build
+        env:
+          NODE_ENV: staging
+
+      # ----------------------------------------------------------
+      # Subir artefacto del build a GitHub Actions
+      # ----------------------------------------------------------
+      - name: Empaquetar artefacto
+        run: |
+          VERSION="${{ steps.bump.outputs.nueva_version }}"
+          NOMBRE="release-v${VERSION}-stg"
+          mkdir -p "dist-package/${NOMBRE}"
+          cp -r dist/ "dist-package/${NOMBRE}/"
+          cp README.md "dist-package/${NOMBRE}/" 2>/dev/null || true
+          cd dist-package
+          zip -r "../${NOMBRE}.zip" "${NOMBRE}/"
+          cd ..
+          echo "ARTEFACTO_ZIP=${NOMBRE}.zip" >> "$GITHUB_ENV"
+
+      - name: Subir artefacto de staging
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-stg-v${{ steps.bump.outputs.nueva_version }}
+          path: ${{ env.ARTEFACTO_ZIP }}
+          retention-days: 14
+
+      # ----------------------------------------------------------
+      # Notificar al equipo
+      # ----------------------------------------------------------
+      - name: Notificar Slack — Staging desplegado
+        if: always()
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "text": "${{ job.status == 'success' && '✅' || '❌' }} *Staging (stg)* — v${{ steps.bump.outputs.nueva_version }}\nDisparado por: ${{ github.actor }}\nCommit: ${{ github.event.head_commit.message }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+# ----------------------------------------------------------
+# Actualizar reporte de estado de ambientes
+# ----------------------------------------------------------
+  actualizar-reporte:
+    name: Actualizar Estado de Ambientes
+    needs: deploy-stg
+    if: success()
+    uses: ./.github/workflows/estado-ambientes.yml

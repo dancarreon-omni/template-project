@@ -1,0 +1,258 @@
+# ============================================================
+#  ci.yml — Integración Continua
+#
+#  Disparadores:
+#    - Push a cualquier rama de trabajo:
+#        feat/*, fix/*, hotfix/*, revert/*,
+#        refactor/*, release/*, chore/*
+#    - Pull Requests apuntando a `dev`
+#
+#  NO incrementa versiones. Solo valida que el código
+#  esté en buen estado antes de integrarse a dev.
+#
+#  Prefijos de ramas válidos:
+#    feat/*     → Nueva funcionalidad
+#    fix/*      → Corrección de bug
+#    hotfix/*   → Corrección urgente en producción
+#    revert/*   → Reversión de una feature
+#    refactor/* → Reestructuración de código sin nueva funcionalidad
+#    release/*  → Rama de estabilización para un release específico
+#    chore/*    → Mantenimiento: dependencias, configuración, scripts
+#
+#  Regla de título de PR:
+#    El título debe comenzar con el prefijo correspondiente
+#    seguido de dos puntos y un espacio. Ejemplos:
+#      feat: Agregar login con Google
+#      fix: Corregir respuesta nula en búsqueda
+#      hotfix: Timeout en pasarela de pago
+#      revert: Revertir notificaciones push
+#      refactor: Extraer lógica de autenticación
+#      release: Release versión 1.2.0
+#      chore: Actualizar dependencias de seguridad
+#
+#  Ramas del proyecto:
+#    dev     → Integración (desarrollo activo)
+#    stg     → Staging / Pruebas QA
+#    preprod → Pre-Producción / Validación final
+#    main    → Producción (fuente de verdad)
+# ============================================================
+
+name: CI — Validar Rama y PR
+
+on:
+  push:
+    branches:
+      - "feat/**"
+      - "fix/**"
+      - "hotfix/**"
+      - "revert/**"
+      - "refactor/**"
+      - "release/**"
+      - "chore/**"
+  pull_request:
+    branches:
+      - dev
+    types:
+      - opened
+      - edited
+      - synchronize
+      - reopened
+
+jobs:
+  # ----------------------------------------------------------
+  # Job 0: Validar título del PR
+  # Corre ÚNICAMENTE en eventos de pull_request.
+  # Bloquea el merge si el título no tiene el prefijo correcto.
+  # ----------------------------------------------------------
+  validar-titulo-pr:
+    name: Validar Título del PR
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Verificar formato del título
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const titulo = context.payload.pull_request.title;
+            const rama   = context.payload.pull_request.head.ref;
+
+            const prefijosValidos = [
+              'feat',
+              'fix',
+              'hotfix',
+              'revert',
+              'refactor',
+              'release',
+              'chore',
+            ];
+
+            // Regex: el título debe empezar con "prefijo: " (con dos puntos y espacio)
+            const regex = new RegExp(`^(${prefijosValidos.join('|')}): .+`);
+            const esValido = regex.test(titulo);
+
+            if (!esValido) {
+              const ejemplos = prefijosValidos
+                .map(p => `  • \`${p}: Descripción del cambio\``)
+                .join('\n');
+
+              const mensaje = [
+                '## ❌ Título de PR inválido',
+                '',
+                `El título actual es: **"${titulo}"**`,
+                '',
+                'El título del PR debe comenzar con uno de los siguientes prefijos, seguido de **dos puntos y un espacio**:',
+                '',
+                ejemplos,
+                '',
+                '### ¿Cómo corregirlo?',
+                '1. Haz clic en el lápiz (✏️) junto al título del PR',
+                '2. Cambia el título para que comience con el prefijo correcto',
+                '3. Este check se re-ejecutará automáticamente',
+                '',
+                '---',
+                `> **Rama:** \`${rama}\``,
+              ].join('\n');
+
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner:        context.repo.owner,
+                repo:         context.repo.repo,
+                body:         mensaje,
+              });
+
+              core.setFailed(`Título inválido: "${titulo}". Debe comenzar con uno de: ${prefijosValidos.join(', ')}`);
+            } else {
+              console.log(`✅ Título válido: "${titulo}"`);
+              const prefijoDetectado = titulo.split(':')[0];
+              core.summary
+                .addHeading('✅ Título del PR válido', 3)
+                .addTable([
+                  [{data: 'Campo',              header: true}, {data: 'Valor',             header: true}],
+                  ['Título',                    titulo],
+                  ['Prefijo detectado',         `\`${prefijoDetectado}\``],
+                  ['Rama',                      `\`${rama}\``],
+                ])
+                .write();
+            }
+
+  # ----------------------------------------------------------
+  # Job 1: Lint + Verificación de tipos
+  # ----------------------------------------------------------
+  lint:
+    name: Lint y Verificación de Tipos
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Ejecutar lint y verificación de tipos
+        run: echo "Reemplazar con el comando de lint del proyecto"
+        # Ejemplos:
+        #   Node.js → npm run lint && npm run type-check
+        #   Python  → flake8 . && mypy .
+        #   Java    → mvn checkstyle:check
+        #   .NET    → dotnet format --verify-no-changes
+
+  # ----------------------------------------------------------
+  # Job 2: Pruebas Unitarias
+  # ----------------------------------------------------------
+  pruebas:
+    name: Pruebas Unitarias
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Ejecutar pruebas unitarias con cobertura
+        run: echo "Reemplazar con el comando de pruebas del proyecto"
+        # Ejemplos:
+        #   Node.js → npm run test:coverage
+        #   Python  → pytest --cov=. --cov-report=json
+        #   Java    → mvn test jacoco:report
+        #   .NET    → dotnet test --collect:"XPlat Code Coverage"
+
+      - name: Subir reporte de cobertura
+        uses: actions/upload-artifact@v4
+        with:
+          name: reporte-cobertura
+          path: coverage/
+          retention-days: 7
+
+      - name: Verificar umbral de cobertura
+        run: |
+          # Adaptar la lectura del reporte de cobertura según el lenguaje.
+          # El umbral mínimo recomendado es 80%.
+          # Ejemplos:
+          #   Node.js (coverage-summary.json):
+          #     COBERTURA=$(node -e "console.log(require('./coverage/coverage-summary.json').total.lines.pct)")
+          #   Python (coverage.json):
+          #     COBERTURA=$(python -c "import json; d=json.load(open('coverage.json')); print(d['totals']['percent_covered'])")
+          #   Java / .NET: leer el XML/HTML del reporte con grep o xmllint
+          echo "⚠️  Configurar lectura de cobertura según el lenguaje del proyecto"
+
+  # ----------------------------------------------------------
+  # Job 3: Verificación de Build
+  # ----------------------------------------------------------
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: pruebas
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Ejecutar build
+        run: echo "Reemplazar con el comando de build del proyecto"
+        # Ejemplos:
+        #   Node.js → npm run build
+        #   Python  → python setup.py build
+        #   Java    → mvn package
+        #   .NET    → dotnet build
+
+      - name: Subir artefacto del build
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ github.sha }}
+          path: dist/
+          retention-days: 3
+
+  # ----------------------------------------------------------
+  # Comentario de resumen final en el PR
+  # ----------------------------------------------------------
+  resumen-pr:
+    name: Comentario de Estado del PR
+    runs-on: ubuntu-latest
+    needs: [validar-titulo-pr, lint, pruebas, build]
+    if: github.event_name == 'pull_request'
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Comentar resultado en el PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const titulo           = context.payload.pull_request.title;
+            const prefijoDetectado = titulo.split(':')[0];
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner:        context.repo.owner,
+              repo:         context.repo.repo,
+              body: [
+                '## ✅ CI Aprobado — Listo para merge',
+                '',
+                '| Verificación        | Estado        |',
+                '|---------------------|---------------|',
+                '| Título del PR       | ✅ Válido     |',
+                '| Lint y Tipos        | ✅ Aprobado   |',
+                '| Pruebas Unitarias   | ✅ Aprobado   |',
+                '| Build               | ✅ Aprobado   |',
+                '',
+                `**Tipo de cambio detectado:** \`${prefijoDetectado}\``,
+                '',
+                'Esta rama está lista para revisión y merge a `dev`.',
+              ].join('\n')
+            });

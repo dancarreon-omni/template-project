@@ -1,0 +1,340 @@
+# ============================================================
+#  deploy-main.yml — Release a Producción (GitHub Release)
+#
+#  Disparador: push a `main`
+#              (PR aprobado desde preprod → main)
+#
+#  ¿Qué hace?
+#    1. Lee la versión (sin bump — la misma que viajó desde stg)
+#    2. Verifica que el tag no exista ya (protección anti-duplicado)
+#    3. Ejecuta pruebas de humo finales
+#    4. Genera el build de producción
+#    5. Empaqueta el artefacto distribuible (ZIP)
+#    6. Genera el CHANGELOG automático desde commits convencionales
+#    7. Crea el tag limpio  v1.2.0  en git
+#    8. Publica el GitHub Release (el borrador creado en preprod)
+#       con el ZIP adjunto como asset descargable
+#    9. Sincroniza el commit de versión de vuelta a dev
+#
+#  Sin acceso a servidores del cliente requerido.
+#  El cliente descarga el artefacto desde GitHub Releases.
+#
+#  Ramas:
+#    preprod → ← origen del PR (aprobado por el negocio)
+#    main    → ← esta rama (producción, fuente de verdad)
+#    dev     → recibe sync automático al final
+# ============================================================
+
+name: Release — Producción (main)
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: release-produccion
+  cancel-in-progress: false
+
+jobs:
+  publicar-release:
+    name: Build + Publicar GitHub Release
+    runs-on: ubuntu-latest
+    environment: production     # ← CRÍTICO: configurar revisores requeridos aquí
+                                # GitHub → Settings → Environments → production
+                                # Agregar Tech Lead / Release Manager como revisor requerido
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout de main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_PAT }}
+
+      # ----------------------------------------------------------
+      # Leer versión del archivo VERSION — absolutamente sin incrementos aquí
+      # ----------------------------------------------------------
+      - name: Leer versión actual
+        id: version
+        run: |
+          if [ ! -f "VERSION" ]; then
+            echo "❌ Archivo VERSION no encontrado en la raíz del repositorio"
+            exit 1
+          fi
+          VERSION=$(cat VERSION | tr -d '[:space:]')
+          echo "Liberando: v$VERSION"
+          echo "version_actual=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION"           >> "$GITHUB_OUTPUT"
+
+      # ----------------------------------------------------------
+      # Verificar que el tag no exista todavía
+      # ----------------------------------------------------------
+      - name: Verificar que el tag no exista
+        run: |
+          TAG="v${{ steps.version.outputs.version_actual }}"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "❌ El tag $TAG ya existe. ¿Ya fue liberado este versión?"
+            exit 1
+          fi
+          echo "✅ $TAG es una versión nueva, continuando."
+
+      # ----------------------------------------------------------
+      # Pruebas de humo finales
+      # ----------------------------------------------------------
+      - name: Ejecutar pruebas de humo finales
+        run: echo "Reemplazar con el comando de pruebas del proyecto"
+        # Ejemplos:
+        #   Node.js → npm run test:smoke
+        #   Python  → pytest tests/smoke
+        #   Java    → mvn test -Dtest=SmokeTest
+        #   .NET    → dotnet test --filter Category=Smoke
+
+      # ----------------------------------------------------------
+      # Build de producción
+      # ----------------------------------------------------------
+      - name: Build para producción
+        run: echo "Reemplazar con el comando de build del proyecto"
+        # Ejemplos:
+        #   Node.js → npm run build
+        #   Python  → python setup.py bdist_wheel
+        #   Java    → mvn package -P production
+        #   .NET    → dotnet publish -c Release
+
+      # ----------------------------------------------------------
+      # Empaquetar artefacto distribuible para clientes
+      # Este es el ZIP que el equipo del cliente descargará e instalará
+      # ----------------------------------------------------------
+      - name: Empaquetar artefacto distribuible
+        run: |
+          VERSION="${{ steps.version.outputs.version_actual }}"
+          NOMBRE_ARTEFACTO="mi-solucion-v${VERSION}"
+
+          # Crear carpeta limpia solo con lo que los clientes necesitan
+          mkdir -p "dist-package/${NOMBRE_ARTEFACTO}"
+
+          # Copiar output del build (ajustar rutas al proyecto)
+          cp -r dist/        "dist-package/${NOMBRE_ARTEFACTO}/"
+          cp    README.md    "dist-package/${NOMBRE_ARTEFACTO}/" 2>/dev/null || true
+
+          # Copiar archivos de instalación/configuración si existen
+          cp .env.example    "dist-package/${NOMBRE_ARTEFACTO}/" 2>/dev/null || true
+          cp install.sh      "dist-package/${NOMBRE_ARTEFACTO}/" 2>/dev/null || true
+
+          # Crear el ZIP
+          cd dist-package
+          zip -r "../${NOMBRE_ARTEFACTO}.zip" "${NOMBRE_ARTEFACTO}/"
+          cd ..
+
+          echo "ARTEFACTO_ZIP=${NOMBRE_ARTEFACTO}.zip"   >> "$GITHUB_ENV"
+          echo "ARTEFACTO_NOMBRE=${NOMBRE_ARTEFACTO}"    >> "$GITHUB_ENV"
+          echo "✅ Empaquetado: ${NOMBRE_ARTEFACTO}.zip"
+          ls -lh "${NOMBRE_ARTEFACTO}.zip"
+
+      # ----------------------------------------------------------
+      # Generar CHANGELOG desde git log desde el último tag
+      # Lista cada commit convencional desde el release anterior
+      # ----------------------------------------------------------
+      - name: Generar CHANGELOG
+        id: changelog
+        run: |
+          VERSION="${{ steps.version.outputs.version_actual }}"
+
+          # Encontrar el tag anterior para comparar
+          TAG_ANTERIOR=$(git tag --sort=-version:refname | grep -v "stg\|rc\|milestone" | sed -n '1p')
+
+          if [ -z "$TAG_ANTERIOR" ]; then
+            echo "No se encontró tag anterior, listando todos los commits"
+            TAG_ANTERIOR=$(git rev-list --max-parents=0 HEAD)
+          fi
+
+          echo "Comparando $TAG_ANTERIOR → HEAD"
+
+          # Construir secciones del changelog desde commits convencionales
+          FEATURES=$(git log  "$TAG_ANTERIOR"..HEAD --pretty=format:"- %s" --no-merges | grep "^- feat"    || true)
+          FIXES=$(git log     "$TAG_ANTERIOR"..HEAD --pretty=format:"- %s" --no-merges | grep "^- fix"     || true)
+          MANTENIMIENTO=$(git log "$TAG_ANTERIOR"..HEAD --pretty=format:"- %s" --no-merges | grep "^- chore\|^- docs\|^- refactor" || true)
+          BREAKING=$(git log  "$TAG_ANTERIOR"..HEAD --pretty=format:"- %s" --no-merges | grep "BREAKING"   || true)
+
+          # Escribir changelog a un archivo
+          {
+            echo "# Changelog — v${VERSION}"
+            echo ""
+            echo "Liberado el $(date '+%Y-%m-%d')"
+            echo ""
+
+            if [ -n "$BREAKING" ]; then
+              echo "## ⚠️ Cambios Disruptivos (Breaking Changes)"
+              echo "$BREAKING"
+              echo ""
+            fi
+
+            if [ -n "$FEATURES" ]; then
+              echo "## ✨ Nuevas Funcionalidades"
+              echo "$FEATURES"
+              echo ""
+            fi
+
+            if [ -n "$FIXES" ]; then
+              echo "## 🐛 Correcciones de Bugs"
+              echo "$FIXES"
+              echo ""
+            fi
+
+            if [ -n "$MANTENIMIENTO" ]; then
+              echo "## 🔧 Mantenimiento"
+              echo "$MANTENIMIENTO"
+              echo ""
+            fi
+
+            echo "---"
+            echo "Release anterior: ${TAG_ANTERIOR}"
+            echo "Diff completo: https://github.com/${{ github.repository }}/compare/${TAG_ANTERIOR}...v${VERSION}"
+
+          } > NOTAS_RELEASE.md
+
+          echo "✅ Notas de release generadas"
+          cat NOTAS_RELEASE.md
+
+      # ----------------------------------------------------------
+      # Crear y hacer push del tag de git
+      # ----------------------------------------------------------
+      - name: Configurar identidad de git
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Crear y hacer push del tag de producción
+        run: |
+          TAG="v${{ steps.version.outputs.version_actual }}"
+          git tag "$TAG" -m "Release de producción $TAG"
+          git push origin "$TAG"
+          echo "✅ Tag $TAG creado y enviado"
+          echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
+
+      # ----------------------------------------------------------
+      # Publicar el GitHub Release
+      # Busca el borrador creado en preprod y lo publica,
+      # adjuntando el ZIP del artefacto y las notas de release.
+      # ----------------------------------------------------------
+      - name: Publicar GitHub Release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs      = require('fs');
+            const version = '${{ steps.version.outputs.version_actual }}';
+            const tag     = `v${version}`;
+            const zipPath = '${{ env.ARTEFACTO_ZIP }}';
+            const notas   = fs.readFileSync('NOTAS_RELEASE.md', 'utf8');
+
+            // Buscar el release borrador existente
+            const { data: releases } = await github.rest.repos.listReleases({
+              owner: context.repo.owner,
+              repo:  context.repo.repo
+            });
+            const borrador = releases.find(r => r.draft && r.tag_name === tag);
+
+            let releaseId;
+            if (borrador) {
+              // Publicar el borrador existente
+              const { data: updated } = await github.rest.repos.updateRelease({
+                owner:      context.repo.owner,
+                repo:       context.repo.repo,
+                release_id: borrador.id,
+                draft:      false,
+                body:       notas + `\n\n---\n🚀 Liberado a producción por @${{ github.actor }} el ${new Date().toISOString().split('T')[0]}`
+              });
+              releaseId = updated.id;
+              console.log(`Release ${tag} publicado: ${updated.html_url}`);
+            } else {
+              // Crear release nuevo si no se encontró borrador
+              const { data: nuevo } = await github.rest.repos.createRelease({
+                owner:       context.repo.owner,
+                repo:        context.repo.repo,
+                tag_name:    tag,
+                name:        tag,
+                body:        notas,
+                draft:       false,
+                prerelease:  false,
+                make_latest: 'true'
+              });
+              releaseId = nuevo.id;
+              console.log(`Release ${tag} creado: ${nuevo.html_url}`);
+            }
+
+            // Adjuntar el ZIP distribuible como asset
+            const zipContenido = fs.readFileSync(zipPath);
+            await github.rest.repos.uploadReleaseAsset({
+              owner:      context.repo.owner,
+              repo:       context.repo.repo,
+              release_id: releaseId,
+              name:       zipPath,
+              data:       zipContenido,
+              headers: {
+                'content-type':   'application/zip',
+                'content-length': zipContenido.length
+              }
+            });
+            console.log(`Asset subido: ${zipPath}`);
+
+            // Adjuntar las notas de release como archivo .md
+            const notasContenido = fs.readFileSync('NOTAS_RELEASE.md');
+            await github.rest.repos.uploadReleaseAsset({
+              owner:      context.repo.owner,
+              repo:       context.repo.repo,
+              release_id: releaseId,
+              name:       `NOTAS_RELEASE-v${version}.md`,
+              data:       notasContenido,
+              headers: {
+                'content-type':   'text/markdown',
+                'content-length': notasContenido.length
+              }
+            });
+            console.log('Notas de release subidas como asset.');
+
+      # ----------------------------------------------------------
+      # Sincronizar main de vuelta a dev
+      # Garantiza que dev siempre tenga el número de versión más reciente
+      # ----------------------------------------------------------
+      - name: Sincronizar main de vuelta a dev
+        run: |
+          git fetch origin dev
+          git checkout dev
+          git merge main --no-ff -m "chore: sincronizar v${{ steps.version.outputs.version_actual }} desde main [skip ci]"
+          git push origin dev
+          echo "✅ dev sincronizado con main"
+
+      # ----------------------------------------------------------
+      # Notificaciones
+      # ----------------------------------------------------------
+      - name: Notificar Slack — Release publicado
+        if: success()
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "text": "🚀 *Producción (main)* — v${{ steps.version.outputs.version_actual }} LIBERADO\nPor: ${{ github.actor }}\nTag: ${{ env.RELEASE_TAG }}\nhttps://github.com/${{ github.repository }}/releases/tag/${{ env.RELEASE_TAG }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: Notificar Slack — Release FALLIDO
+        if: failure()
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "text": "❌ *Release de producción FALLIDO* — v${{ steps.version.outputs.version_actual }}\nDisparado por: ${{ github.actor }}\nRevisar la ejecución de Actions inmediatamente."
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+# ----------------------------------------------------------
+# Actualizar reporte de estado de ambientes
+# ----------------------------------------------------------
+  actualizar-reporte:
+    name: Actualizar Estado de Ambientes
+    needs: publicar-release
+    if: success()
+    uses: ./.github/workflows/estado-ambientes.yml

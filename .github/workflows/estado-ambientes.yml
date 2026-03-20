@@ -1,0 +1,527 @@
+# ============================================================
+#  estado-ambientes.yml — Reporte de Estado de Ambientes
+#
+#  Disparadores:
+#    - Manual (workflow_dispatch) — cualquier miembro del equipo
+#      puede ejecutarlo desde GitHub → Actions → "Estado de Ambientes"
+#    - Automático después de cada deploy exitoso a cualquier
+#      ambiente (llamado con workflow_call desde otros workflows)
+#
+#  ¿Qué hace?
+#    Consulta la versión actual en cada rama (dev, stg, preprod, main),
+#    compara contra el historial de tags, y genera un reporte
+#    en el Summary de GitHub Actions con:
+#      - Versión activa por ambiente
+#      - Fecha y autor del último deploy
+#      - Commit exacto desplegado
+#      - Cuántas versiones de diferencia hay entre ambientes
+#      - Historial de los últimos 5 releases por ambiente
+#
+#  Caso de uso principal:
+#    Un desarrollador nuevo necesita saber en qué versión está
+#    cada ambiente para rastrear un bug o validar un deploy.
+#    Solo va a GitHub → Actions → "Estado de Ambientes" → Run workflow.
+# ============================================================
+
+name: Estado de Ambientes
+
+on:
+  workflow_dispatch:
+    inputs:
+      mostrar_historial:
+        description: "¿Mostrar historial de los últimos releases?"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+  # Permite ser llamado desde otros workflows al terminar un deploy
+  workflow_call:
+
+jobs:
+  reporte:
+    name: Generar Reporte de Versiones
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout con historial completo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # Necesario para leer tags y commits de todas las ramas
+
+      # ----------------------------------------------------------
+      # Recopilar versión y metadata de cada ambiente
+      # ----------------------------------------------------------
+      - name: Recopilar estado de ambientes
+        id: estado
+        run: |
+          git fetch --all --tags --quiet
+
+          # Función para leer la versión de una rama
+          leer_version() {
+            local RAMA=$1
+            local VERSION="desconocida"
+
+            # Lee exclusivamente el archivo VERSION (agnóstico al lenguaje)
+            if git show "origin/${RAMA}:VERSION" > /dev/null 2>&1; then
+              VERSION=$(git show "origin/${RAMA}:VERSION" | tr -d '[:space:]')
+            fi
+
+            echo "$VERSION"
+          }
+
+          # Función para obtener el último commit de una rama
+          ultimo_commit() {
+            local RAMA=$1
+            git log "origin/${RAMA}" -1 --format="%H" 2>/dev/null || echo "sin-commit"
+          }
+
+          # Función para obtener el autor del último commit
+          ultimo_autor() {
+            local RAMA=$1
+            git log "origin/${RAMA}" -1 --format="%an" 2>/dev/null || echo "desconocido"
+          }
+
+          # Función para obtener la fecha del último commit
+          ultima_fecha() {
+            local RAMA=$1
+            git log "origin/${RAMA}" -1 --format="%ci" 2>/dev/null | cut -d' ' -f1 || echo "sin fecha"
+          }
+
+          # Función para obtener el mensaje del último commit
+          ultimo_mensaje() {
+            local RAMA=$1
+            git log "origin/${RAMA}" -1 --format="%s" 2>/dev/null | cut -c1-60 || echo "sin mensaje"
+          }
+
+          # Función para encontrar el tag más reciente de una rama
+          ultimo_tag() {
+            local PATRON=$1
+            git tag --sort=-version:refname | grep "$PATRON" | head -1 || echo "sin tag"
+          }
+
+          # Recopilar datos de cada ambiente
+          echo "Recopilando estado de las ramas..."
+
+          VERSION_DEV=$(leer_version "dev")
+          VERSION_STG=$(leer_version "stg")
+          VERSION_PREPROD=$(leer_version "preprod")
+          VERSION_MAIN=$(leer_version "main")
+
+          COMMIT_DEV=$(ultimo_commit "dev" | cut -c1-7)
+          COMMIT_STG=$(ultimo_commit "stg" | cut -c1-7)
+          COMMIT_PREPROD=$(ultimo_commit "preprod" | cut -c1-7)
+          COMMIT_MAIN=$(ultimo_commit "main" | cut -c1-7)
+
+          AUTOR_DEV=$(ultimo_autor "dev")
+          AUTOR_STG=$(ultimo_autor "stg")
+          AUTOR_PREPROD=$(ultimo_autor "preprod")
+          AUTOR_MAIN=$(ultimo_autor "main")
+
+          FECHA_DEV=$(ultima_fecha "dev")
+          FECHA_STG=$(ultima_fecha "stg")
+          FECHA_PREPROD=$(ultima_fecha "preprod")
+          FECHA_MAIN=$(ultima_fecha "main")
+
+          MENSAJE_DEV=$(ultimo_mensaje "dev")
+          MENSAJE_STG=$(ultimo_mensaje "stg")
+          MENSAJE_PREPROD=$(ultimo_mensaje "preprod")
+          MENSAJE_MAIN=$(ultimo_mensaje "main")
+
+          TAG_STG=$(ultimo_tag "\-stg$")
+          TAG_PREPROD=$(ultimo_tag "\-rc\.")
+          TAG_MAIN=$(git tag --sort=-version:refname | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+$" | head -1 || echo "sin tag")
+
+          # Exportar para el siguiente paso
+          echo "VERSION_DEV=$VERSION_DEV"         >> "$GITHUB_OUTPUT"
+          echo "VERSION_STG=$VERSION_STG"         >> "$GITHUB_OUTPUT"
+          echo "VERSION_PREPROD=$VERSION_PREPROD" >> "$GITHUB_OUTPUT"
+          echo "VERSION_MAIN=$VERSION_MAIN"       >> "$GITHUB_OUTPUT"
+
+          echo "COMMIT_DEV=$COMMIT_DEV"           >> "$GITHUB_OUTPUT"
+          echo "COMMIT_STG=$COMMIT_STG"           >> "$GITHUB_OUTPUT"
+          echo "COMMIT_PREPROD=$COMMIT_PREPROD"   >> "$GITHUB_OUTPUT"
+          echo "COMMIT_MAIN=$COMMIT_MAIN"         >> "$GITHUB_OUTPUT"
+
+          echo "AUTOR_DEV=$AUTOR_DEV"             >> "$GITHUB_OUTPUT"
+          echo "AUTOR_STG=$AUTOR_STG"             >> "$GITHUB_OUTPUT"
+          echo "AUTOR_PREPROD=$AUTOR_PREPROD"     >> "$GITHUB_OUTPUT"
+          echo "AUTOR_MAIN=$AUTOR_MAIN"           >> "$GITHUB_OUTPUT"
+
+          echo "FECHA_DEV=$FECHA_DEV"             >> "$GITHUB_OUTPUT"
+          echo "FECHA_STG=$FECHA_STG"             >> "$GITHUB_OUTPUT"
+          echo "FECHA_PREPROD=$FECHA_PREPROD"     >> "$GITHUB_OUTPUT"
+          echo "FECHA_MAIN=$FECHA_MAIN"           >> "$GITHUB_OUTPUT"
+
+          echo "MENSAJE_DEV=$MENSAJE_DEV"         >> "$GITHUB_OUTPUT"
+          echo "MENSAJE_STG=$MENSAJE_STG"         >> "$GITHUB_OUTPUT"
+          echo "MENSAJE_PREPROD=$MENSAJE_PREPROD" >> "$GITHUB_OUTPUT"
+          echo "MENSAJE_MAIN=$MENSAJE_MAIN"       >> "$GITHUB_OUTPUT"
+
+          echo "TAG_STG=$TAG_STG"                 >> "$GITHUB_OUTPUT"
+          echo "TAG_PREPROD=$TAG_PREPROD"         >> "$GITHUB_OUTPUT"
+          echo "TAG_MAIN=$TAG_MAIN"               >> "$GITHUB_OUTPUT"
+
+      # ----------------------------------------------------------
+      # Calcular diferencias entre ambientes
+      # ----------------------------------------------------------
+      - name: Calcular diferencias entre ambientes
+        id: diff
+        run: |
+          git fetch --all --tags --quiet
+
+          # Contar commits de diferencia entre dos ramas
+          commits_diff() {
+            local DESDE=$1
+            local HASTA=$2
+            COUNT=$(git rev-list --count "origin/${DESDE}..origin/${HASTA}" 2>/dev/null || echo "0")
+            echo "$COUNT"
+          }
+
+          DIFF_DEV_STG=$(commits_diff "stg" "dev")
+          DIFF_STG_PREPROD=$(commits_diff "preprod" "stg")
+          DIFF_PREPROD_MAIN=$(commits_diff "main" "preprod")
+          DIFF_DEV_MAIN=$(commits_diff "main" "dev")
+
+          echo "DIFF_DEV_STG=$DIFF_DEV_STG"           >> "$GITHUB_OUTPUT"
+          echo "DIFF_STG_PREPROD=$DIFF_STG_PREPROD"   >> "$GITHUB_OUTPUT"
+          echo "DIFF_PREPROD_MAIN=$DIFF_PREPROD_MAIN" >> "$GITHUB_OUTPUT"
+          echo "DIFF_DEV_MAIN=$DIFF_DEV_MAIN"         >> "$GITHUB_OUTPUT"
+
+      # ----------------------------------------------------------
+      # Generar historial de releases
+      # ----------------------------------------------------------
+      - name: Generar historial de releases
+        id: historial
+        run: |
+          git fetch --all --tags --quiet
+
+          # Últimos 5 releases en main (tags limpios vX.Y.Z)
+          RELEASES_MAIN=$(git tag --sort=-version:refname \
+            | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+$" \
+            | head -5 \
+            | while read TAG; do
+                FECHA=$(git log -1 --format="%ci" "$TAG" 2>/dev/null | cut -d' ' -f1)
+                AUTOR=$(git log -1 --format="%an" "$TAG" 2>/dev/null)
+                echo "${TAG}|${FECHA}|${AUTOR}"
+              done)
+
+          # Últimos 5 deploys a stg
+          DEPLOYS_STG=$(git tag --sort=-version:refname \
+            | grep "\-stg$" \
+            | head -5 \
+            | while read TAG; do
+                FECHA=$(git log -1 --format="%ci" "$TAG" 2>/dev/null | cut -d' ' -f1)
+                AUTOR=$(git log -1 --format="%an" "$TAG" 2>/dev/null)
+                echo "${TAG}|${FECHA}|${AUTOR}"
+              done)
+
+          # Últimos 5 release candidates en preprod
+          DEPLOYS_PREPROD=$(git tag --sort=-version:refname \
+            | grep "\-rc\." \
+            | head -5 \
+            | while read TAG; do
+                FECHA=$(git log -1 --format="%ci" "$TAG" 2>/dev/null | cut -d' ' -f1)
+                AUTOR=$(git log -1 --format="%an" "$TAG" 2>/dev/null)
+                echo "${TAG}|${FECHA}|${AUTOR}"
+              done)
+
+          # Guardar en archivos temporales para el siguiente paso
+          echo "$RELEASES_MAIN"  > /tmp/releases_main.txt
+          echo "$DEPLOYS_STG"    > /tmp/deploys_stg.txt
+          echo "$DEPLOYS_PREPROD"> /tmp/deploys_preprod.txt
+
+      # ----------------------------------------------------------
+      # Publicar reporte en el Summary de GitHub Actions
+      # ----------------------------------------------------------
+      - name: Publicar reporte en Summary
+        uses: actions/github-script@v7
+        env:
+          VERSION_DEV:     ${{ steps.estado.outputs.VERSION_DEV }}
+          VERSION_STG:     ${{ steps.estado.outputs.VERSION_STG }}
+          VERSION_PREPROD: ${{ steps.estado.outputs.VERSION_PREPROD }}
+          VERSION_MAIN:    ${{ steps.estado.outputs.VERSION_MAIN }}
+          COMMIT_DEV:      ${{ steps.estado.outputs.COMMIT_DEV }}
+          COMMIT_STG:      ${{ steps.estado.outputs.COMMIT_STG }}
+          COMMIT_PREPROD:  ${{ steps.estado.outputs.COMMIT_PREPROD }}
+          COMMIT_MAIN:     ${{ steps.estado.outputs.COMMIT_MAIN }}
+          AUTOR_DEV:       ${{ steps.estado.outputs.AUTOR_DEV }}
+          AUTOR_STG:       ${{ steps.estado.outputs.AUTOR_STG }}
+          AUTOR_PREPROD:   ${{ steps.estado.outputs.AUTOR_PREPROD }}
+          AUTOR_MAIN:      ${{ steps.estado.outputs.AUTOR_MAIN }}
+          FECHA_DEV:       ${{ steps.estado.outputs.FECHA_DEV }}
+          FECHA_STG:       ${{ steps.estado.outputs.FECHA_STG }}
+          FECHA_PREPROD:   ${{ steps.estado.outputs.FECHA_PREPROD }}
+          FECHA_MAIN:      ${{ steps.estado.outputs.FECHA_MAIN }}
+          MENSAJE_DEV:     ${{ steps.estado.outputs.MENSAJE_DEV }}
+          MENSAJE_STG:     ${{ steps.estado.outputs.MENSAJE_STG }}
+          MENSAJE_PREPROD: ${{ steps.estado.outputs.MENSAJE_PREPROD }}
+          MENSAJE_MAIN:    ${{ steps.estado.outputs.MENSAJE_MAIN }}
+          TAG_STG:         ${{ steps.estado.outputs.TAG_STG }}
+          TAG_PREPROD:     ${{ steps.estado.outputs.TAG_PREPROD }}
+          TAG_MAIN:        ${{ steps.estado.outputs.TAG_MAIN }}
+          DIFF_DEV_STG:    ${{ steps.diff.outputs.DIFF_DEV_STG }}
+          DIFF_STG_PREPROD:${{ steps.diff.outputs.DIFF_STG_PREPROD }}
+          DIFF_PREPROD_MAIN:${{ steps.diff.outputs.DIFF_PREPROD_MAIN }}
+          DIFF_DEV_MAIN:   ${{ steps.diff.outputs.DIFF_DEV_MAIN }}
+        with:
+          script: |
+            const fs = require('fs');
+            const repo = `https://github.com/${context.repo.owner}/${context.repo.repo}`;
+
+            const v = {
+              dev:     process.env.VERSION_DEV,
+              stg:     process.env.VERSION_STG,
+              preprod: process.env.VERSION_PREPROD,
+              main:    process.env.VERSION_MAIN,
+            };
+            const commits = {
+              dev:     process.env.COMMIT_DEV,
+              stg:     process.env.COMMIT_STG,
+              preprod: process.env.COMMIT_PREPROD,
+              main:    process.env.COMMIT_MAIN,
+            };
+            const autores = {
+              dev:     process.env.AUTOR_DEV,
+              stg:     process.env.AUTOR_STG,
+              preprod: process.env.AUTOR_PREPROD,
+              main:    process.env.AUTOR_MAIN,
+            };
+            const fechas = {
+              dev:     process.env.FECHA_DEV,
+              stg:     process.env.FECHA_STG,
+              preprod: process.env.FECHA_PREPROD,
+              main:    process.env.FECHA_MAIN,
+            };
+            const mensajes = {
+              dev:     process.env.MENSAJE_DEV,
+              stg:     process.env.MENSAJE_STG,
+              preprod: process.env.MENSAJE_PREPROD,
+              main:    process.env.MENSAJE_MAIN,
+            };
+            const tags = {
+              stg:     process.env.TAG_STG,
+              preprod: process.env.TAG_PREPROD,
+              main:    process.env.TAG_MAIN,
+            };
+            const diffs = {
+              devStg:      parseInt(process.env.DIFF_DEV_STG     || '0'),
+              stgPreprod:  parseInt(process.env.DIFF_STG_PREPROD || '0'),
+              preprodMain: parseInt(process.env.DIFF_PREPROD_MAIN|| '0'),
+              devMain:     parseInt(process.env.DIFF_DEV_MAIN    || '0'),
+            };
+
+            // Icono de estado por ambiente
+            const icono = (rama) => {
+              if (rama === 'main')    return '🟢';
+              if (rama === 'preprod') return '🟡';
+              if (rama === 'stg')     return '🔵';
+              if (rama === 'dev')     return '🟣';
+              return '⚪';
+            };
+
+            // Badge de diferencia de commits
+            const badgeDiff = (n) => {
+              if (n === 0) return '✅ Sincronizado';
+              if (n <= 5)  return `⚠️ ${n} commit(s) adelante`;
+              return `🔴 ${n} commits adelante`;
+            };
+
+            // Leer historial de archivos temporales
+            let releasesMain   = '';
+            let deploysStg     = '';
+            let deploysPreprod = '';
+            try {
+              releasesMain   = fs.readFileSync('/tmp/releases_main.txt',   'utf8').trim();
+              deploysStg     = fs.readFileSync('/tmp/deploys_stg.txt',     'utf8').trim();
+              deploysPreprod = fs.readFileSync('/tmp/deploys_preprod.txt', 'utf8').trim();
+            } catch(e) { /* archivos opcionales */ }
+
+            // Parsear historial
+            const parsearHistorial = (texto) => {
+              if (!texto) return [];
+              return texto.split('\n')
+                .filter(l => l.trim())
+                .map(l => {
+                  const [tag, fecha, autor] = l.split('|');
+                  return { tag: tag?.trim(), fecha: fecha?.trim(), autor: autor?.trim() };
+                });
+            };
+
+            const histMain   = parsearHistorial(releasesMain);
+            const histStg    = parsearHistorial(deploysStg);
+            const histPreprod= parsearHistorial(deploysPreprod);
+
+            // Construir tabla de historial
+            const tablaHistorial = (items) => {
+              if (!items.length) return '| Sin registros | — | — |\n';
+              return items.map(i =>
+                `| \`${i.tag || '—'}\` | ${i.fecha || '—'} | ${i.autor || '—'} |`
+              ).join('\n') + '\n';
+            };
+
+            // Enlace a comparación entre tags
+            const linkDiff = (desde, hasta) =>
+              `[ver diff](${repo}/compare/${desde}...${hasta})`;
+
+            const fechaReporte = new Date().toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
+
+            // Construir el Summary
+            await core.summary
+              .addHeading('📊 Estado de Ambientes', 1)
+              .addRaw(`> Reporte generado el **${fechaReporte}** por **@${context.actor}**\n\n`)
+
+              // Tabla principal de versiones
+              .addHeading('Versión actual por ambiente', 2)
+              .addTable([
+                [
+                  {data: 'Ambiente',       header: true},
+                  {data: 'Versión',        header: true},
+                  {data: 'Último tag',     header: true},
+                  {data: 'Commit',         header: true},
+                  {data: 'Fecha',          header: true},
+                  {data: 'Último deploy',  header: true},
+                ],
+                [
+                  `${icono('main')} main (Producción)`,
+                  `\`v${v.main}\``,
+                  `\`${tags.main}\``,
+                  `[\`${commits.main}\`](${repo}/commit/${commits.main})`,
+                  fechas.main,
+                  autores.main,
+                ],
+                [
+                  `${icono('preprod')} preprod (Pre-Producción)`,
+                  `\`v${v.preprod}\``,
+                  `\`${tags.preprod}\``,
+                  `[\`${commits.preprod}\`](${repo}/commit/${commits.preprod})`,
+                  fechas.preprod,
+                  autores.preprod,
+                ],
+                [
+                  `${icono('stg')} stg (Staging)`,
+                  `\`v${v.stg}\``,
+                  `\`${tags.stg}\``,
+                  `[\`${commits.stg}\`](${repo}/commit/${commits.stg})`,
+                  fechas.stg,
+                  autores.stg,
+                ],
+                [
+                  `${icono('dev')} dev (Desarrollo)`,
+                  `\`v${v.dev}\``,
+                  '—',
+                  `[\`${commits.dev}\`](${repo}/commit/${commits.dev})`,
+                  fechas.dev,
+                  autores.dev,
+                ],
+              ])
+
+              // Diferencias entre ambientes
+              .addHeading('Diferencias entre ambientes', 2)
+              .addTable([
+                [
+                  {data: 'Comparación',               header: true},
+                  {data: 'Commits de diferencia',     header: true},
+                  {data: 'Estado',                    header: true},
+                ],
+                [
+                  `dev → stg`,
+                  `${diffs.devStg}`,
+                  badgeDiff(diffs.devStg),
+                ],
+                [
+                  `stg → preprod`,
+                  `${diffs.stgPreprod}`,
+                  badgeDiff(diffs.stgPreprod),
+                ],
+                [
+                  `preprod → main`,
+                  `${diffs.preprodMain}`,
+                  badgeDiff(diffs.preprodMain),
+                ],
+                [
+                  `dev → main (total)`,
+                  `${diffs.devMain}`,
+                  badgeDiff(diffs.devMain),
+                ],
+              ])
+
+              // Último commit por ambiente
+              .addHeading('Último commit por ambiente', 2)
+              .addTable([
+                [
+                  {data: 'Ambiente', header: true},
+                  {data: 'Mensaje del último commit', header: true},
+                ],
+                ['🟢 main',    mensajes.main],
+                ['🟡 preprod', mensajes.preprod],
+                ['🔵 stg',     mensajes.stg],
+                ['🟣 dev',     mensajes.dev],
+              ])
+
+              // Historial de releases en main
+              .addHeading('Últimos releases en main (Producción)', 2)
+              .addTable([
+                [
+                  {data: 'Tag',   header: true},
+                  {data: 'Fecha', header: true},
+                  {data: 'Autor', header: true},
+                ],
+                ...( histMain.length
+                  ? histMain.map(i => [`\`${i.tag}\``, i.fecha, i.autor])
+                  : [['Sin registros', '—', '—']]
+                ),
+              ])
+
+              // Historial de deploys en stg
+              .addHeading('Últimos deploys en stg (Staging)', 2)
+              .addTable([
+                [
+                  {data: 'Tag',   header: true},
+                  {data: 'Fecha', header: true},
+                  {data: 'Autor', header: true},
+                ],
+                ...( histStg.length
+                  ? histStg.map(i => [`\`${i.tag}\``, i.fecha, i.autor])
+                  : [['Sin registros', '—', '—']]
+                ),
+              ])
+
+              // Historial de release candidates en preprod
+              .addHeading('Últimos release candidates en preprod', 2)
+              .addTable([
+                [
+                  {data: 'Tag',   header: true},
+                  {data: 'Fecha', header: true},
+                  {data: 'Autor', header: true},
+                ],
+                ...( histPreprod.length
+                  ? histPreprod.map(i => [`\`${i.tag}\``, i.fecha, i.autor])
+                  : [['Sin registros', '—', '—']]
+                ),
+              ])
+
+              // Leyenda
+              .addHeading('Leyenda', 2)
+              .addRaw([
+                '| Icono | Ambiente    | Descripción                                              |',
+                '|-------|-------------|----------------------------------------------------------|',
+                '| 🟢    | main        | Producción — versión que tienen los clientes instalada   |',
+                '| 🟡    | preprod     | Pre-Producción — candidato a release, en validación final|',
+                '| 🔵    | stg         | Staging — en pruebas QA                                  |',
+                '| 🟣    | dev         | Desarrollo — integración activa del equipo               |',
+                '',
+                '| Estado           | Significado                                              |',
+                '|------------------|----------------------------------------------------------|',
+                '| ✅ Sincronizado  | El ambiente tiene exactamente lo mismo que el siguiente  |',
+                '| ⚠️ N commit(s)   | Hay trabajo pendiente de promover, cantidad manejable    |',
+                '| 🔴 N commits     | Diferencia grande — revisar si hay un deploy pendiente   |',
+              ].join('\n') + '\n')
+
+              .write();
+
+            console.log('✅ Reporte generado correctamente');

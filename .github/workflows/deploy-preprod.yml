@@ -1,0 +1,185 @@
+# ============================================================
+#  deploy-preprod.yml — Despliegue a Pre-Producción
+#
+#  Disparador: push a `preprod`
+#              (QA aprobó en stg, el equipo abre un PR: stg → preprod)
+#
+#  ¿Qué hace?
+#    1. Lee la versión actual del archivo VERSION
+#       (NO hace bump — la misma versión que estuvo en stg viaja aquí)
+#    2. Crea un tag de git  v1.2.0-rc.N  (release candidate)
+#    3. Ejecuta suite completa de regresión
+#    4. Genera el build y sube el artefacto
+#    5. Crea un GitHub Release en borrador (draft)
+#       (se publica cuando se apruebe el paso a producción)
+#
+#  Requiere aprobación manual via GitHub Environments.
+#
+#  Ramas:
+#    stg     → ← origen del PR (Staging aprobado)
+#    preprod → ← esta rama
+#    main    → siguiente paso (Producción)
+# ============================================================
+
+name: Deploy — Pre-Producción (preprod)
+
+on:
+  push:
+    branches:
+      - preprod
+
+concurrency:
+  group: deploy-preprod
+  cancel-in-progress: false
+
+jobs:
+  deploy-preprod:
+    name: Regresión + Build para Pre-Producción
+    runs-on: ubuntu-latest
+    environment: preprod        # Configurar revisores requeridos en GitHub → Settings → Environments
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout de preprod
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_PAT }}
+
+      # ----------------------------------------------------------
+      # Leer versión actual del archivo VERSION (sin incremento)
+      # ----------------------------------------------------------
+      - name: Leer versión actual
+        id: version
+        run: |
+          if [ ! -f "VERSION" ]; then
+            echo "❌ Archivo VERSION no encontrado en la raíz del repositorio"
+            exit 1
+          fi
+          VERSION=$(cat VERSION | tr -d '[:space:]')
+          echo "Versión actual: $VERSION"
+          echo "version_actual=$VERSION" >> "$GITHUB_OUTPUT"
+
+      # ----------------------------------------------------------
+      # Suite completa de regresión
+      # ----------------------------------------------------------
+      - name: Ejecutar pruebas de regresión completas
+        run: echo "Reemplazar con el comando de pruebas del proyecto"
+        # Ejemplos:
+        #   Node.js → npm run test:e2e
+        #   Python  → pytest tests/e2e
+        #   Java    → mvn verify
+        #   .NET    → dotnet test --filter Category=E2E
+
+      - name: Ejecutar auditoría de seguridad
+        run: echo "Reemplazar con el comando de auditoría del proyecto"
+        # Ejemplos:
+        #   Node.js → npm audit --audit-level=high
+        #   Python  → pip-audit
+        #   Java    → mvn dependency-check:check
+        #   .NET    → dotnet list package --vulnerable
+
+      - name: Ejecutar prueba de carga (smoke)
+        run: |
+          echo "Ejecutando prueba de carga básica..."
+          # Ejemplo con k6:
+          # k6 run --vus 10 --duration 30s tests/load/smoke.js
+          echo "✅ Prueba de carga aprobada"
+
+      # ----------------------------------------------------------
+      # Tag como release candidate
+      # ----------------------------------------------------------
+      - name: Configurar identidad de git
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Crear tag de release candidate
+        run: |
+          BASE_TAG="v${{ steps.version.outputs.version_actual }}-rc"
+          COUNT=1
+          while git rev-parse "$BASE_TAG.$COUNT" >/dev/null 2>&1; do
+            COUNT=$((COUNT + 1))
+          done
+          RC_TAG="$BASE_TAG.$COUNT"
+          echo "Creando tag: $RC_TAG"
+          git tag "$RC_TAG" -m "Release candidate para v${{ steps.version.outputs.version_actual }}"
+          git push origin "$RC_TAG"
+          echo "RC_TAG=$RC_TAG" >> "$GITHUB_ENV"
+
+      # ----------------------------------------------------------
+      # Build
+      # ----------------------------------------------------------
+      - name: Build para pre-producción
+        run: echo "Reemplazar con el comando de build del proyecto"
+        # Ejemplos:
+        #   Node.js → npm run build
+        #   Python  → python setup.py build
+        #   Java    → mvn package -P production
+        #   .NET    → dotnet publish -c Release
+
+      # ----------------------------------------------------------
+      # Empaquetar y subir artefacto
+      # ----------------------------------------------------------
+      - name: Empaquetar artefacto
+        run: |
+          VERSION="${{ steps.version.outputs.version_actual }}"
+          NOMBRE="release-v${VERSION}-rc"
+          mkdir -p "dist-package/${NOMBRE}"
+          cp -r dist/ "dist-package/${NOMBRE}/"
+          cp README.md "dist-package/${NOMBRE}/" 2>/dev/null || true
+          cp .env.example "dist-package/${NOMBRE}/" 2>/dev/null || true
+          cd dist-package
+          zip -r "../${NOMBRE}.zip" "${NOMBRE}/"
+          cd ..
+          echo "ARTEFACTO_ZIP=${NOMBRE}.zip" >> "$GITHUB_ENV"
+          echo "ARTEFACTO_NOMBRE=${NOMBRE}" >> "$GITHUB_ENV"
+
+      - name: Subir artefacto de pre-producción
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-preprod-v${{ steps.version.outputs.version_actual }}
+          path: ${{ env.ARTEFACTO_ZIP }}
+          retention-days: 30
+
+      # ----------------------------------------------------------
+      # Crear GitHub Release en borrador (draft)
+      # Se publicará cuando se apruebe el paso a producción
+      # ----------------------------------------------------------
+      - name: Crear GitHub Release en borrador
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const version = '${{ steps.version.outputs.version_actual }}';
+            const rcTag   = '${{ env.RC_TAG }}';
+            const { data: release } = await github.rest.repos.createRelease({
+              owner:      context.repo.owner,
+              repo:       context.repo.repo,
+              tag_name:   `v${version}`,
+              name:       `v${version}`,
+              body: `## v${version}\n\n> ⏳ Esta release está en revisión de Pre-Producción.\n> Aprueba el workflow de Producción para publicarla.\n\n**Tag RC:** \`${rcTag}\`\n\n### Qué verificar en preprod\n- [ ] Todas las features del sprint funcionan correctamente\n- [ ] Sin regresiones respecto al release anterior\n- [ ] El rendimiento es aceptable\n- [ ] Auditoría de seguridad limpia`,
+              draft:      true,
+              prerelease: false
+            });
+            console.log(`Release borrador creado: ${release.html_url}`);
+
+      - name: Notificar Slack — Pre-Prod desplegado, esperando aprobación
+        if: success()
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "text": "🎯 *Pre-Producción (preprod)* — v${{ steps.version.outputs.version_actual }} desplegado\nTag: ${{ env.RC_TAG }}\n⏳ Esperando aprobación del negocio antes del release a producción."
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+# ----------------------------------------------------------
+# Actualizar reporte de estado de ambientes
+# ----------------------------------------------------------
+  actualizar-reporte:
+    name: Actualizar Estado de Ambientes
+    needs: deploy-preprod
+    if: success()
+    uses: ./.github/workflows/estado-ambientes.yml

@@ -73,7 +73,7 @@ jobs:
   liberar-hotfix:
     name: Liberar Hotfix a Producción
     runs-on: ubuntu-latest
-    environment: production     # Requiere aprobación, incluso para hotfixes
+    environment: prod     # Requiere aprobación, incluso para hotfixes
     permissions:
       contents: write
     # Solo ejecutar cuando un PR de hotfix/* se mergea a main
@@ -146,7 +146,7 @@ jobs:
       - name: Crear tag de git
         run: |
           TAG="v${{ steps.bump.outputs.nueva_version }}"
-          git tag "$TAG" -m "Hotfix release $TAG"
+          git tag "$TAG" -m "Hotfix $TAG"
           git push origin "$TAG"
           echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
 
@@ -173,7 +173,7 @@ jobs:
               prerelease: false
             });
 
-            // Adjuntar artefacto
+            // Adjuntar artefacto al release
             const zipContenido = fs.readFileSync(zipPath);
             await github.rest.repos.uploadReleaseAsset({
               owner:      context.repo.owner,
@@ -187,7 +187,7 @@ jobs:
               }
             });
 
-            console.log(`Hotfix release creado: ${release.html_url}`);
+            console.log(`Hotfix publicado: ${release.html_url}`);
 
       # ----------------------------------------------------------
       # CRÍTICO: Sincronizar hotfix de vuelta a dev

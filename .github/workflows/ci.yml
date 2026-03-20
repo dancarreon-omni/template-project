@@ -88,7 +88,7 @@ jobs:
               'chore',
             ];
 
-            // Regex: el título debe empezar con "prefijo: " (con dos puntos y espacio)
+            // Expresión regular: el título debe empezar con "prefijo: " (dos puntos y espacio)
             const regex = new RegExp(`^(${prefijosValidos.join('|')}): .+`);
             const esValido = regex.test(titulo);
 

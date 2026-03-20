@@ -70,7 +70,12 @@ jobs:
       #   .NET     → dotnet test
       # ----------------------------------------------------------
       - name: Ejecutar pruebas
-        run: npm run test
+        run: echo "Reemplazar con el comando de pruebas del proyecto"
+        # Ejemplos:
+        #   Node.js → npm run test
+        #   Python  → pytest
+        #   Java    → mvn test
+        #   .NET    → dotnet test
 
       # ----------------------------------------------------------
       # Incrementar versión MINOR
@@ -103,9 +108,12 @@ jobs:
       # Build
       # ----------------------------------------------------------
       - name: Build para staging
-        run: npm run build
-        env:
-          NODE_ENV: staging
+        run: echo "Reemplazar con el comando de build del proyecto"
+        # Ejemplos:
+        #   Node.js → npm run build
+        #   Python  → python setup.py build
+        #   Java    → mvn package
+        #   .NET    → dotnet build
 
       # ----------------------------------------------------------
       # Subir artefacto del build a GitHub Actions

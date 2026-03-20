@@ -93,7 +93,7 @@ Configurar en **Settings → Environments**:
 - Revisores requeridos: Líder de QA (1 aprobación)
 - No requiere secrets de servidor
 
-### `production`
+### `prod`
 - Revisores requeridos: Tech Lead + 1 más (se recomiendan 2 aprobaciones)
 - Rama de despliegue permitida: solo ***main***
 - No requiere secrets de servidor
@@ -148,7 +148,7 @@ git commit -m "fix(pagos): manejar timeout del gateway de forma elegante [CRIT-2
 git push origin hotfix/timeout-de-pago
 
 # 4. Abrir PR: hotfix/timeout-de-pago → main
-#    El workflow valida y requiere aprobación del entorno production
+#    El workflow valida y requiere aprobación del entorno prod
 #    Al mergear → versión sube a 1.2.1, se publica GitHub Release con ZIP
 
 # 5. El workflow sincroniza automáticamente v1.2.1 de vuelta a dev

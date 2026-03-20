@@ -40,8 +40,8 @@ jobs:
   publicar-release:
     name: Build + Publicar GitHub Release
     runs-on: ubuntu-latest
-    environment: production     # ← CRÍTICO: configurar revisores requeridos aquí
-                                # GitHub → Settings → Environments → production
+    environment: prod     # ← CRÍTICO: configurar revisores requeridos aquí
+                                # GitHub → Settings → Environments → prod
                                 # Agregar Tech Lead / Release Manager como revisor requerido
     permissions:
       contents: write
@@ -228,7 +228,7 @@ jobs:
             const zipPath = '${{ env.ARTEFACTO_ZIP }}';
             const notas   = fs.readFileSync('NOTAS_RELEASE.md', 'utf8');
 
-            // Buscar el release borrador existente
+            // Buscar el release en borrador creado en preprod
             const { data: releases } = await github.rest.repos.listReleases({
               owner: context.repo.owner,
               repo:  context.repo.repo
@@ -237,7 +237,7 @@ jobs:
 
             let releaseId;
             if (borrador) {
-              // Publicar el borrador existente
+              // Publicar el borrador encontrado
               const { data: updated } = await github.rest.repos.updateRelease({
                 owner:      context.repo.owner,
                 repo:       context.repo.repo,
@@ -248,7 +248,7 @@ jobs:
               releaseId = updated.id;
               console.log(`Release ${tag} publicado: ${updated.html_url}`);
             } else {
-              // Crear release nuevo si no se encontró borrador
+              // Crear release nuevo si no se encontró ningún borrador
               const { data: nuevo } = await github.rest.repos.createRelease({
                 owner:       context.repo.owner,
                 repo:        context.repo.repo,
@@ -263,7 +263,7 @@ jobs:
               console.log(`Release ${tag} creado: ${nuevo.html_url}`);
             }
 
-            // Adjuntar el ZIP distribuible como asset
+            // Adjuntar el ZIP distribuible como asset del release
             const zipContenido = fs.readFileSync(zipPath);
             await github.rest.repos.uploadReleaseAsset({
               owner:      context.repo.owner,
@@ -276,9 +276,9 @@ jobs:
                 'content-length': zipContenido.length
               }
             });
-            console.log(`Asset subido: ${zipPath}`);
+            console.log(`Artefacto adjunto: ${zipPath}`);
 
-            // Adjuntar las notas de release como archivo .md
+            // Adjuntar las notas de release como archivo Markdown
             const notasContenido = fs.readFileSync('NOTAS_RELEASE.md');
             await github.rest.repos.uploadReleaseAsset({
               owner:      context.repo.owner,
@@ -291,7 +291,7 @@ jobs:
                 'content-length': notasContenido.length
               }
             });
-            console.log('Notas de release subidas como asset.');
+            console.log('Notas de release adjuntadas correctamente.');
 
       # ----------------------------------------------------------
       # Sincronizar main de vuelta a dev

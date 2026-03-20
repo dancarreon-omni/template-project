@@ -38,7 +38,7 @@ jobs:
   major-bump:
     name: Incrementar versión MAJOR
     runs-on: ubuntu-latest
-    environment: production     # Requiere aprobación — esto es importante
+    environment: prod     # Requiere aprobación — esto es importante
     permissions:
       contents: write
 

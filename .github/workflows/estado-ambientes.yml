@@ -241,32 +241,32 @@ jobs:
       - name: Publicar reporte en Summary
         uses: actions/github-script@v7
         env:
-          VERSION_DEV:      ${{ steps.estado.outputs.VERSION_DEV }}
-          VERSION_STG:      ${{ steps.estado.outputs.VERSION_STG }}
-          VERSION_PREPROD:  ${{ steps.estado.outputs.VERSION_PREPROD }}
-          VERSION_MAIN:     ${{ steps.estado.outputs.VERSION_MAIN }}
-          COMMIT_DEV:       ${{ steps.estado.outputs.COMMIT_DEV }}
-          COMMIT_STG:       ${{ steps.estado.outputs.COMMIT_STG }}
-          COMMIT_PREPROD:   ${{ steps.estado.outputs.COMMIT_PREPROD }}
-          COMMIT_MAIN:      ${{ steps.estado.outputs.COMMIT_MAIN }}
-          AUTOR_DEV:        ${{ steps.estado.outputs.AUTOR_DEV }}
-          AUTOR_STG:        ${{ steps.estado.outputs.AUTOR_STG }}
-          AUTOR_PREPROD:    ${{ steps.estado.outputs.AUTOR_PREPROD }}
-          AUTOR_MAIN:       ${{ steps.estado.outputs.AUTOR_MAIN }}
-          FECHA_DEV:        ${{ steps.estado.outputs.FECHA_DEV }}
-          FECHA_STG:        ${{ steps.estado.outputs.FECHA_STG }}
-          FECHA_PREPROD:    ${{ steps.estado.outputs.FECHA_PREPROD }}
-          FECHA_MAIN:       ${{ steps.estado.outputs.FECHA_MAIN }}
-          MENSAJE_DEV:      ${{ steps.estado.outputs.MENSAJE_DEV }}
-          MENSAJE_STG:      ${{ steps.estado.outputs.MENSAJE_STG }}
-          MENSAJE_PREPROD:  ${{ steps.estado.outputs.MENSAJE_PREPROD }}
-          MENSAJE_MAIN:     ${{ steps.estado.outputs.MENSAJE_MAIN }}
-          TAG_STG:          ${{ steps.estado.outputs.TAG_STG }}
-          TAG_PREPROD:      ${{ steps.estado.outputs.TAG_PREPROD }}
-          TAG_MAIN:         ${{ steps.estado.outputs.TAG_MAIN }}
-          DIFF_DEV_STG:     ${{ steps.diff.outputs.DIFF_DEV_STG }}
-          DIFF_STG_PREPROD: ${{ steps.diff.outputs.DIFF_STG_PREPROD }}
-          DIFF_PREPROD_MAIN: ${{ steps.diff.outputs.DIFF_PREPROD_MAIN }}
+          VERSION_DEV:     ${{ steps.estado.outputs.VERSION_DEV }}
+          VERSION_STG:     ${{ steps.estado.outputs.VERSION_STG }}
+          VERSION_PREPROD: ${{ steps.estado.outputs.VERSION_PREPROD }}
+          VERSION_MAIN:    ${{ steps.estado.outputs.VERSION_MAIN }}
+          COMMIT_DEV:      ${{ steps.estado.outputs.COMMIT_DEV }}
+          COMMIT_STG:      ${{ steps.estado.outputs.COMMIT_STG }}
+          COMMIT_PREPROD:  ${{ steps.estado.outputs.COMMIT_PREPROD }}
+          COMMIT_MAIN:     ${{ steps.estado.outputs.COMMIT_MAIN }}
+          AUTOR_DEV:       ${{ steps.estado.outputs.AUTOR_DEV }}
+          AUTOR_STG:       ${{ steps.estado.outputs.AUTOR_STG }}
+          AUTOR_PREPROD:   ${{ steps.estado.outputs.AUTOR_PREPROD }}
+          AUTOR_MAIN:      ${{ steps.estado.outputs.AUTOR_MAIN }}
+          FECHA_DEV:       ${{ steps.estado.outputs.FECHA_DEV }}
+          FECHA_STG:       ${{ steps.estado.outputs.FECHA_STG }}
+          FECHA_PREPROD:   ${{ steps.estado.outputs.FECHA_PREPROD }}
+          FECHA_MAIN:      ${{ steps.estado.outputs.FECHA_MAIN }}
+          MENSAJE_DEV:     ${{ steps.estado.outputs.MENSAJE_DEV }}
+          MENSAJE_STG:     ${{ steps.estado.outputs.MENSAJE_STG }}
+          MENSAJE_PREPROD: ${{ steps.estado.outputs.MENSAJE_PREPROD }}
+          MENSAJE_MAIN:    ${{ steps.estado.outputs.MENSAJE_MAIN }}
+          TAG_STG:         ${{ steps.estado.outputs.TAG_STG }}
+          TAG_PREPROD:     ${{ steps.estado.outputs.TAG_PREPROD }}
+          TAG_MAIN:        ${{ steps.estado.outputs.TAG_MAIN }}
+          DIFF_DEV_STG:    ${{ steps.diff.outputs.DIFF_DEV_STG }}
+          DIFF_STG_PREPROD:${{ steps.diff.outputs.DIFF_STG_PREPROD }}
+          DIFF_PREPROD_MAIN:${{ steps.diff.outputs.DIFF_PREPROD_MAIN }}
           DIFF_DEV_MAIN:   ${{ steps.diff.outputs.DIFF_DEV_MAIN }}
         with:
           script: |

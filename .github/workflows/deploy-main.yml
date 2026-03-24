@@ -308,31 +308,6 @@ jobs:
       # ----------------------------------------------------------
       # Notificaciones
       # ----------------------------------------------------------
-      - name: Notificar Slack — Release publicado
-        if: success()
-        uses: slackapi/slack-github-action@v1.26.0
-        with:
-          payload: |
-            {
-              "text": "🚀 *Producción (main)* — v${{ steps.version.outputs.version_actual }} LIBERADO\nPor: ${{ github.actor }}\nTag: ${{ env.RELEASE_TAG }}\nhttps://github.com/${{ github.repository }}/releases/tag/${{ env.RELEASE_TAG }}"
-            }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-
-      - name: Notificar Slack — Release FALLIDO
-        if: failure()
-        uses: slackapi/slack-github-action@v1.26.0
-        with:
-          payload: |
-            {
-              "text": "❌ *Release de producción FALLIDO* — v${{ steps.version.outputs.version_actual }}\nDisparado por: ${{ github.actor }}\nRevisar la ejecución de Actions inmediatamente."
-            }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-
-# ----------------------------------------------------------
-# Actualizar reporte de estado de ambientes
-# ----------------------------------------------------------
   actualizar-reporte:
     name: Actualizar Estado de Ambientes
     needs: publicar-release

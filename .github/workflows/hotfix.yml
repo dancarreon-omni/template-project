@@ -204,14 +204,3 @@ jobs:
 
           git push origin dev
           echo "✅ Hotfix v${{ steps.bump.outputs.nueva_version }} sincronizado a dev"
-
-      - name: Notificar Slack
-        if: always()
-        uses: slackapi/slack-github-action@v1.26.0
-        with:
-          payload: |
-            {
-              "text": "${{ job.status == 'success' && '🔥✅' || '🔥❌' }} *Hotfix* v${{ steps.bump.outputs.nueva_version }} — ${{ job.status }}\nCorreción: ${{ github.event.pull_request.title }}\nLiberado por: ${{ github.actor }}"
-            }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

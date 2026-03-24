@@ -164,20 +164,6 @@ jobs:
             });
             console.log(`Release borrador creado: ${release.html_url}`);
 
-      - name: Notificar Slack — Pre-Prod desplegado, esperando aprobación
-        if: success()
-        uses: slackapi/slack-github-action@v1.26.0
-        with:
-          payload: |
-            {
-              "text": "🎯 *Pre-Producción (preprod)* — v${{ steps.version.outputs.version_actual }} desplegado\nTag: ${{ env.RC_TAG }}\n⏳ Esperando aprobación del negocio antes del release a producción."
-            }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-
-# ----------------------------------------------------------
-# Actualizar reporte de estado de ambientes
-# ----------------------------------------------------------
   actualizar-reporte:
     name: Actualizar Estado de Ambientes
     needs: deploy-preprod

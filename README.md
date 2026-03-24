@@ -75,9 +75,10 @@ Configurar en **Settings → Secrets and variables → Actions**:
 | Secret              | Descripción                                                              |
 |---------------------|--------------------------------------------------------------------------|
 | `GH_PAT`            | Personal Access Token con scope `repo` (para hacer push de tags/commits) |
-| `SLACK_WEBHOOK_URL` | URL del Incoming Webhook de Slack (eliminar los pasos si no se usa)      |
 
 > Los secrets de URLs de servidores no son necesarios ya que no se despliega directamente a ningún servidor. El artefacto se adjunta al GitHub Release.
+
+> La integración con Slack está disponible pero no activa. Si en el futuro se desea activar, agregar el secret `SLACK_WEBHOOK_URL` y reincorporar los pasos de notificación en cada workflow.
 
 ---
 
@@ -357,6 +358,55 @@ git tag --sort=-version:refname | grep "rc"
 # Buscar en qué versión se introdujo un commit específico
 git tag --contains <commit-sha> --sort=-version:refname
 ```
+
+---
+
+## El token GH_PAT
+
+### ¿Por qué no alcanza con el token automático de GitHub?
+
+GitHub Actions genera automáticamente un token llamado `GITHUB_TOKEN` en cada ejecución. Sin embargo, tiene una limitación de seguridad intencional: **los commits y tags que crea el `GITHUB_TOKEN` no disparan otros workflows**.
+
+Esto rompe el flujo de promoción entre ambientes:
+
+```
+deploy-stg.yml hace commit de versión → push a dev
+  → debería disparar deploy-preprod.yml... pero no lo hace
+  → porque GITHUB_TOKEN no activa workflows subsecuentes
+```
+
+El `GH_PAT` es un Personal Access Token que sí dispara workflows, porque GitHub lo trata como un push de una persona real.
+
+### ¿Es siempre necesario?
+
+Depende de la configuración del repositorio:
+
+| Situación | ¿Necesita GH_PAT? |
+|---|---|
+| Ramas protegidas (`dev`, `stg`, `preprod`, `main`) | **Sí** — `GITHUB_TOKEN` no puede hacer push a ramas protegidas |
+| Sin branch protection | No estrictamente, pero sigue siendo necesario para que los commits del bot activen el siguiente workflow |
+| Usando `workflow_dispatch` entre workflows | No — cada workflow llama al siguiente explícitamente sin necesitar un commit intermedio |
+
+### Alternativa sin PAT (repositorio sin branch protection)
+
+Activar en **Settings → Actions → General**:
+- Workflow permissions → **"Read and write permissions"** ✅
+- **"Allow GitHub Actions to create and approve pull requests"** ✅
+
+Con esto el `GITHUB_TOKEN` nativo puede hacer push a ramas no protegidas. Si en algún momento se agregan reglas de protección de ramas, será necesario crear el PAT.
+
+### Cómo crear el GH_PAT
+
+1. Ir a **GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)**
+2. Clic en **"Generate new token (classic)"**
+3. Nombre sugerido: `CI_RELEASE_BOT`
+4. Expiración: 1 año (renovar anualmente)
+5. Scopes requeridos: marcar únicamente **`repo`** (incluye todo lo necesario)
+6. Clic en **"Generate token"** y copiar el valor
+7. Ir al repositorio → **Settings → Secrets and variables → Actions → New repository secret**
+8. Nombre: `GH_PAT`, valor: el token copiado
+
+> El token tiene los mismos permisos que tu cuenta. Se recomienda crear una cuenta de servicio dedicada (bot) para el equipo y generar el PAT desde esa cuenta, de modo que los commits automatizados aparezcan con un usuario neutro en lugar del tuyo personal.
 
 ---
 

@@ -137,23 +137,6 @@ jobs:
           path: ${{ env.ARTEFACTO_ZIP }}
           retention-days: 14
 
-      # ----------------------------------------------------------
-      # Notificar al equipo
-      # ----------------------------------------------------------
-      - name: Notificar Slack — Staging desplegado
-        if: always()
-        uses: slackapi/slack-github-action@v1.26.0
-        with:
-          payload: |
-            {
-              "text": "${{ job.status == 'success' && '✅' || '❌' }} *Staging (stg)* — v${{ steps.bump.outputs.nueva_version }}\nDisparado por: ${{ github.actor }}\nCommit: ${{ github.event.head_commit.message }}"
-            }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-
-# ----------------------------------------------------------
-# Actualizar reporte de estado de ambientes
-# ----------------------------------------------------------
   actualizar-reporte:
     name: Actualizar Estado de Ambientes
     needs: deploy-stg

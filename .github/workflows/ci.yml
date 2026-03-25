@@ -5,35 +5,26 @@
 #    - Push a cualquier rama de trabajo:
 #        feat/*, fix/*, hotfix/*, revert/*,
 #        refactor/*, release/*, chore/*
-#    - Pull Requests apuntando a `dev`
+#    - Pull Requests apuntando a dev, stg, preprod o main
 #
 #  NO incrementa versiones. Solo valida que el código
-#  esté en buen estado antes de integrarse a dev.
+#  esté en buen estado antes de integrarse.
 #
-#  Prefijos de ramas válidos:
-#    feat/*     → Nueva funcionalidad
-#    fix/*      → Corrección de bug
-#    hotfix/*   → Corrección urgente en producción
-#    revert/*   → Reversión de una feature
-#    refactor/* → Reestructuración de código sin nueva funcionalidad
-#    release/*  → Rama de estabilización para un release específico
-#    chore/*    → Mantenimiento: dependencias, configuración, scripts
+#  Regla de título de PR — varía según la rama destino:
 #
-#  Regla de título de PR:
-#    El título debe comenzar con el prefijo correspondiente
-#    seguido de dos puntos y un espacio. Ejemplos:
-#      feat: Agregar login con Google
-#      fix: Corregir respuesta nula en búsqueda
-#      hotfix: Timeout en pasarela de pago
-#      revert: Revertir notificaciones push
-#      refactor: Extraer lógica de autenticación
-#      release: Release versión 1.2.0
-#      chore: Actualizar dependencias de seguridad
+#    → dev, stg, preprod:
+#         Acepta: feat, fix, chore, refactor, revert
+#         Rechaza: release, hotfix
+#         (son ambientes de desarrollo y pruebas, no de release)
+#
+#    → main:
+#         Acepta ÚNICAMENTE: release, hotfix
+#         (solo se llega a main con un release formal o emergencia)
 #
 #  Ramas del proyecto:
 #    dev     → Integración (desarrollo activo)
 #    stg     → Staging / Pruebas QA
-#    preprod → Pre-Producción / Validación final
+#    preprod → Pre-Producción / Validación final (UAT)
 #    main    → Producción (fuente de verdad)
 # ============================================================
 
@@ -52,6 +43,9 @@ on:
   pull_request:
     branches:
       - dev
+      - stg
+      - preprod
+      - main
     types:
       - opened
       - edited
@@ -62,7 +56,7 @@ jobs:
   # ----------------------------------------------------------
   # Job 0: Validar título del PR
   # Corre ÚNICAMENTE en eventos de pull_request.
-  # Bloquea el merge si el título no tiene el prefijo correcto.
+  # Las reglas de prefijos válidos cambian según la rama destino.
   # ----------------------------------------------------------
   validar-titulo-pr:
     name: Validar Título del PR
@@ -75,34 +69,108 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const titulo = context.payload.pull_request.title;
-            const rama   = context.payload.pull_request.head.ref;
+            const titulo       = context.payload.pull_request.title;
+            const ramaOrigen   = context.payload.pull_request.head.ref;
+            const ramaDestino  = context.payload.pull_request.base.ref;
 
-            const prefijosValidos = [
-              'feat',
-              'fix',
-              'hotfix',
-              'revert',
-              'refactor',
-              'release',
-              'chore',
-            ];
+            // ----------------------------------------------------------------
+            // Prefijos permitidos y bloqueados según rama destino
+            // ----------------------------------------------------------------
+            const reglasDeDestino = {
+              // dev, stg y preprod son ambientes de trabajo y pruebas.
+              // Nunca se hace un "release" formal en ellos — solo en main.
+              dev:     { permitidos: ['feat', 'fix', 'chore', 'refactor', 'revert'], bloqueados: ['release', 'hotfix'] },
+              stg:     { permitidos: ['feat', 'fix', 'chore', 'refactor', 'revert'], bloqueados: ['release', 'hotfix'] },
+              preprod: { permitidos: ['feat', 'fix', 'chore', 'refactor', 'revert'], bloqueados: ['release', 'hotfix'] },
+              // main es producción: solo se llega con un release formal o un hotfix de emergencia.
+              main:    { permitidos: ['release', 'hotfix'], bloqueados: [] },
+            };
+
+            const regla = reglasDeDestino[ramaDestino];
+
+            // Rama destino desconocida — no aplicar validación
+            if (!regla) {
+              console.log(`Rama destino "${ramaDestino}" no requiere validación de título.`);
+              return;
+            }
 
             // Expresión regular: el título debe empezar con "prefijo: " (dos puntos y espacio)
-            const regex = new RegExp(`^(${prefijosValidos.join('|')}): .+`);
+            const regex    = new RegExp(`^(${regla.permitidos.join('|')}): .+`);
             const esValido = regex.test(titulo);
 
-            if (!esValido) {
-              const ejemplos = prefijosValidos
-                .map(p => `  • \`${p}: Descripción del cambio\``)
-                .join('\n');
+            // ----------------------------------------------------------------
+            // Caso exitoso
+            // ----------------------------------------------------------------
+            if (esValido) {
+              const prefijoDetectado = titulo.split(':')[0];
+              console.log(`✅ Título válido: "${titulo}"`);
+              await core.summary
+                .addHeading('✅ Título del PR válido', 3)
+                .addTable([
+                  [{data: 'Campo',             header: true}, {data: 'Valor',                   header: true}],
+                  ['Título',                   titulo],
+                  ['Prefijo detectado',        `\`${prefijoDetectado}\``],
+                  ['Rama origen',              `\`${ramaOrigen}\``],
+                  ['Rama destino',             `\`${ramaDestino}\``],
+                ])
+                .write();
+              return;
+            }
 
-              const mensaje = [
-                '## ❌ Título de PR inválido',
+            // ----------------------------------------------------------------
+            // Caso de error — construir mensaje según la rama destino
+            // ----------------------------------------------------------------
+            let cuerpoMensaje;
+
+            if (ramaDestino === 'main') {
+              // Mensaje específico para main: solo release o hotfix
+              cuerpoMensaje = [
+                '## ❌ Título de PR inválido para `main`',
                 '',
                 `El título actual es: **"${titulo}"**`,
                 '',
-                'El título del PR debe comenzar con uno de los siguientes prefijos, seguido de **dos puntos y un espacio**:',
+                `Los PRs hacia \`main\` representan un release formal a producción o una corrección`,
+                `de emergencia. Por eso, el título **solo puede usar uno de estos dos prefijos**:`,
+                '',
+                '| Prefijo | Cuándo usarlo | Ejemplo |',
+                '|---|---|---|',
+                '| `release:` | Promoción normal desde `preprod` | `release: Versión 1.2.0` |',
+                '| `hotfix:` | Corrección urgente de emergencia | `hotfix: Timeout en pasarela de pago` |',
+                '',
+                '### ¿Cómo corregirlo?',
+                '1. Haz clic en el lápiz (✏️) junto al título del PR',
+                '2. Cambia el título para que comience con `release:` o `hotfix:`',
+                '3. Este check se re-ejecutará automáticamente',
+                '',
+                '> Si tu PR no es un release ni un hotfix, probablemente la rama destino',
+                '> incorrecta. Los cambios de desarrollo van a `dev`, no a `main`.',
+                '',
+                '---',
+                `> **Título actual:** \`${titulo}\``,
+                `> **Rama origen:** \`${ramaOrigen}\``,
+                `> **Rama destino:** \`${ramaDestino}\``,
+              ].join('\n');
+
+            } else {
+              // Mensaje para dev, stg, preprod
+              const ejemplos = regla.permitidos
+                .map(p => `  • \`${p}: Descripción del cambio\``)
+                .join('\n');
+
+              const bloqueadosFormateados = regla.bloqueados
+                .map(p => `\`${p}\``)
+                .join(' y ');
+
+              cuerpoMensaje = [
+                `## ❌ Título de PR inválido para \`${ramaDestino}\``,
+                '',
+                `El título actual es: **"${titulo}"**`,
+                '',
+                `Los prefijos ${bloqueadosFormateados} están reservados para PRs a \`main\` únicamente`,
+                `(releases formales y correcciones de emergencia). En \`${ramaDestino}\` se trabaja`,
+                `con cambios de desarrollo y pruebas.`,
+                '',
+                `El título debe comenzar con uno de estos prefijos, seguido de **dos puntos y un espacio**:`,
                 '',
                 ejemplos,
                 '',
@@ -112,37 +180,35 @@ jobs:
                 '3. Este check se re-ejecutará automáticamente',
                 '',
                 '---',
-                `> **Rama:** \`${rama}\``,
+                `> **Título actual:** \`${titulo}\``,
+                `> **Rama origen:** \`${ramaOrigen}\``,
+                `> **Rama destino:** \`${ramaDestino}\``,
               ].join('\n');
-
-              await github.rest.issues.createComment({
-                issue_number: context.issue.number,
-                owner:        context.repo.owner,
-                repo:         context.repo.repo,
-                body:         mensaje,
-              });
-
-              core.setFailed(`Título inválido: "${titulo}". Debe comenzar con uno de: ${prefijosValidos.join(', ')}`);
-            } else {
-              console.log(`✅ Título válido: "${titulo}"`);
-              const prefijoDetectado = titulo.split(':')[0];
-              core.summary
-                .addHeading('✅ Título del PR válido', 3)
-                .addTable([
-                  [{data: 'Campo',              header: true}, {data: 'Valor',             header: true}],
-                  ['Título',                    titulo],
-                  ['Prefijo detectado',         `\`${prefijoDetectado}\``],
-                  ['Rama',                      `\`${rama}\``],
-                ])
-                .write();
             }
+
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner:        context.repo.owner,
+              repo:         context.repo.repo,
+              body:         cuerpoMensaje,
+            });
+
+            core.setFailed(
+              `Título inválido para "${ramaDestino}": "${titulo}". ` +
+              `Prefijos permitidos: ${regla.permitidos.join(', ')}`
+            );
 
   # ----------------------------------------------------------
   # Job 1: Lint + Verificación de tipos
+  # Solo corre en PRs a dev o en push a ramas de trabajo.
+  # En PRs a stg, preprod y main solo se valida el título.
   # ----------------------------------------------------------
   lint:
     name: Lint y Verificación de Tipos
     runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' && github.base_ref == 'dev')
     steps:
       - name: Checkout del código
         uses: actions/checkout@v4
@@ -162,6 +228,9 @@ jobs:
     name: Pruebas Unitarias
     runs-on: ubuntu-latest
     needs: lint
+    if: |
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' && github.base_ref == 'dev')
     steps:
       - name: Checkout del código
         uses: actions/checkout@v4
@@ -200,6 +269,9 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
     needs: pruebas
+    if: |
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' && github.base_ref == 'dev')
     steps:
       - name: Checkout del código
         uses: actions/checkout@v4
@@ -221,12 +293,14 @@ jobs:
 
   # ----------------------------------------------------------
   # Comentario de resumen final en el PR
+  # Solo corre cuando todos los jobs anteriores aplican y pasan.
   # ----------------------------------------------------------
   resumen-pr:
     name: Comentario de Estado del PR
     runs-on: ubuntu-latest
     needs: [validar-titulo-pr, lint, pruebas, build]
-    if: github.event_name == 'pull_request'
+    if: |
+      github.event_name == 'pull_request' && github.base_ref == 'dev'
     permissions:
       pull-requests: write
     steps:
@@ -236,6 +310,7 @@ jobs:
           script: |
             const titulo           = context.payload.pull_request.title;
             const prefijoDetectado = titulo.split(':')[0];
+            const ramaDestino      = context.payload.pull_request.base.ref;
 
             github.rest.issues.createComment({
               issue_number: context.issue.number,
@@ -253,6 +328,6 @@ jobs:
                 '',
                 `**Tipo de cambio detectado:** \`${prefijoDetectado}\``,
                 '',
-                'Esta rama está lista para revisión y merge a `dev`.',
+                `Esta rama está lista para revisión y merge a \`${ramaDestino}\`.`,
               ].join('\n')
             });

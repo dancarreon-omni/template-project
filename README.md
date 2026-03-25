@@ -382,21 +382,38 @@ Todo Pull Request apuntando a ***dev*** debe tener un título que comience con e
 prefijo: Descripción clara y concisa del cambio
 ```
 
-### Prefijos válidos y ejemplos
+### Prefijos válidos según rama destino
+
+Las reglas cambian dependiendo de a qué rama apunta el PR:
+
+#### PRs a `dev`, `stg` y `preprod`
+
+Estos tres ambientes son de trabajo y pruebas — nunca representan un release formal.
 
 | Prefijo | Cuándo usarlo | Ejemplo de título |
 |---|---|---|
 | `feat:` | Nueva funcionalidad | `feat: Agregar login con Google` |
 | `fix:` | Corrección de bug | `fix: Corregir respuesta nula en búsqueda` |
-| `hotfix:` | Corrección urgente en producción | `hotfix: Timeout en pasarela de pago` |
-| `revert:` | Revertir una feature de dev | `revert: Revertir notificaciones push` |
 | `refactor:` | Reestructuración sin nueva funcionalidad | `refactor: Extraer lógica de autenticación` |
-| `release:` | Estabilización de un release | `release: Release versión 1.2.0` |
+| `revert:` | Revertir una feature | `revert: Revertir notificaciones push` |
 | `chore:` | Mantenimiento y tareas técnicas | `chore: Actualizar dependencias de seguridad` |
+
+> `release:` y `hotfix:` están **bloqueados** en estos ambientes — están reservados exclusivamente para `main`.
+
+#### PRs a `main`
+
+Solo se llega a `main` con un release formal desde `preprod` o una corrección de emergencia.
+
+| Prefijo | Cuándo usarlo | Ejemplo de título |
+|---|---|---|
+| `release:` | Promoción normal desde `preprod` | `release: Versión 1.2.0` |
+| `hotfix:` | Corrección urgente de emergencia | `hotfix: Timeout en pasarela de pago` |
+
+> Cualquier otro prefijo (`feat:`, `fix:`, etc.) está **bloqueado** en `main`.
 
 ### ¿Qué pasa si el título no cumple el formato?
 
-El job `validar-titulo-pr` dentro de `ci.yml` fallará y publicará automáticamente un comentario en el PR indicando el error y cómo corregirlo. El PR **no podrá mergearse** hasta que el título sea corregido (siempre que tengas activada la opción _"Require status checks to pass before merging"_ en la configuración de la rama `dev` en GitHub).
+El job `validar-titulo-pr` dentro de `ci.yml` fallará y publicará automáticamente un comentario en el PR con un mensaje específico según la rama destino — explicando qué prefijos son válidos ahí y por qué. El PR **no podrá mergearse** hasta que el título sea corregido (siempre que tengas activada la opción _"Require status checks to pass before merging"_ en la configuración de cada rama protegida en GitHub).
 
 ### Activar la protección en GitHub
 

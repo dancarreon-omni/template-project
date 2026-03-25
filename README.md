@@ -64,7 +64,8 @@ hotfix/*   ───────────────────────
 | `deploy-main.yml`    | Push a ***main***                       | Publicar GitHub Release + adjuntar ZIP + sync dev  |
 | `hotfix.yml`         | Push/PR en `hotfix/*`                   | Bump PATCH + release de emergencia                 |
 | `major-bump.yml`     | Manual (`workflow_dispatch`)            | Bump MAJOR para cambios disruptivos                |
-| `estado-ambientes.yml` | Manual + automático post-deploy       | Reporte de versión activa en cada ambiente         |
+| `estado-ambientes.yml`     | Manual + automático post-deploy           | Reporte de versión activa en cada ambiente         |
+| `validar-rama-origen.yml`  | PR a `dev`, `stg`, `preprod`, `main`      | Verifica que la rama origen del PR sea la correcta |
 
 ---
 
@@ -98,6 +99,128 @@ Configurar en **Settings → Environments**:
 - Revisores requeridos: Tech Lead + 1 más (se recomiendan 2 aprobaciones)
 - Rama de despliegue permitida: solo ***main***
 - No requiere secrets de servidor
+
+---
+
+## Protección de Ramas — Rulesets
+
+Los workflows de CI validan el código y el título del PR, pero no impiden que alguien abra un PR desde una rama equivocada. Eso se resuelve con **Rulesets** en la configuración del repositorio — son reglas que GitHub aplica antes de que el PR pueda mergearse, independientemente de cualquier workflow.
+
+### Flujo permitido vs bloqueado
+
+```
+feat/*, fix/*, refactor/*, chore/*, release/*, revert/*  →  dev   ✅
+dev                                                       →  stg   ✅
+stg                                                       →  preprod ✅
+preprod                                                   →  main  ✅
+hotfix/*                                                  →  main  ✅ (emergencia)
+
+feat/*   →  main     ❌  bloqueado
+feat/*   →  stg      ❌  bloqueado
+dev      →  main     ❌  bloqueado
+dev      →  preprod  ❌  bloqueado
+stg      →  main     ❌  bloqueado
+```
+
+### Cómo configurar cada Ruleset
+
+Ir a: **Repositorio → Settings → Rules → Rulesets → New ruleset → New branch ruleset**
+
+---
+
+#### Ruleset: `proteccion-main`
+
+| Campo | Valor |
+|---|---|
+| Name | `proteccion-main` |
+| Enforcement status | Active |
+| Target branches | Include by name → `main` |
+
+Reglas a activar:
+
+- **Restrict pushes** — nadie puede hacer push directo, solo vía PR
+- **Require a pull request before merging** — obliga a abrir un PR
+  - Required approvals: `2`
+  - Dismiss stale pull request approvals when new commits are pushed: ✅
+- **Require status checks to pass**
+  - Agregar: `Validar Título del PR`
+  - Agregar: `Validar Rama de Origen del PR`
+- **Allowed merge methods** — habilitar solo `Squash` o `Merge commit` (según preferencia del equipo)
+
+Ramas permitidas como origen del merge (en **Restrict who can push** o mediante el workflow `validar-rama-origen.yml`):
+- `preprod`
+- `hotfix/*`
+
+---
+
+#### Ruleset: `proteccion-preprod`
+
+| Campo | Valor |
+|---|---|
+| Name | `proteccion-preprod` |
+| Enforcement status | Active |
+| Target branches | Include by name → `preprod` |
+
+Reglas a activar:
+
+- **Restrict pushes**
+- **Require a pull request before merging**
+  - Required approvals: `1`
+- **Require status checks to pass**
+  - Agregar: `Validar Título del PR`
+  - Agregar: `Validar Rama de Origen del PR`
+
+Ramas permitidas como origen: `stg`
+
+---
+
+#### Ruleset: `proteccion-stg`
+
+| Campo | Valor |
+|---|---|
+| Name | `proteccion-stg` |
+| Enforcement status | Active |
+| Target branches | Include by name → `stg` |
+
+Reglas a activar:
+
+- **Restrict pushes**
+- **Require a pull request before merging**
+  - Required approvals: `1`
+- **Require status checks to pass**
+  - Agregar: `Validar Título del PR`
+  - Agregar: `Validar Rama de Origen del PR`
+
+Ramas permitidas como origen: `dev`
+
+---
+
+#### Ruleset: `proteccion-dev`
+
+| Campo | Valor |
+|---|---|
+| Name | `proteccion-dev` |
+| Enforcement status | Active |
+| Target branches | Include by name → `dev` |
+
+Reglas a activar:
+
+- **Restrict pushes**
+- **Require a pull request before merging**
+  - Required approvals: `1`
+- **Require status checks to pass**
+  - Agregar: `Validar Título del PR`
+  - Agregar: `CI — Validar Rama y PR`
+
+Ramas permitidas como origen: `feat/*`, `fix/*`, `hotfix/*`, `revert/*`, `refactor/*`, `release/*`, `chore/*`
+
+---
+
+### Segunda capa — workflow `validar-rama-origen.yml`
+
+Los Rulesets son la protección principal. El workflow `validar-rama-origen.yml` actúa como segunda capa: valida programáticamente que la rama base del PR sea la correcta para cada rama destino, y publica un comentario explicativo si no lo es.
+
+Esto cubre el caso donde los Rulesets estén configurados en modo `Evaluate` (sin bloquear aún) o cuando se quiere un mensaje de error más descriptivo que el genérico de GitHub.
 
 ---
 

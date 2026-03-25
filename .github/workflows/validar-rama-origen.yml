@@ -1,0 +1,185 @@
+# ============================================================
+#  validar-rama-origen.yml — Validar Rama de Origen del PR
+#
+#  Disparadores:
+#    - Pull Request abierto, editado o sincronizado apuntando
+#      a dev, stg, preprod o main
+#
+#  ¿Qué hace?
+#    Verifica que la rama desde la que viene el PR sea la
+#    permitida para cada rama destino:
+#
+#      Destino dev     → solo acepta: feat/*, fix/*, hotfix/*,
+#                        revert/*, refactor/*, release/*, chore/*
+#      Destino stg     → solo acepta: dev
+#      Destino preprod → solo acepta: stg
+#      Destino main    → solo acepta: preprod, hotfix/*
+#
+#    Si la rama origen no es la correcta:
+#      - Falla el check (bloquea el merge si los Rulesets están activos)
+#      - Publica un comentario en el PR explicando el error
+#        y cuál es el flujo correcto
+#
+#  Esta es la segunda capa de protección. La primera son los
+#  Rulesets configurados en Settings → Rules → Rulesets.
+#
+#  Ramas del proyecto:
+#    dev     → Integración (desarrollo activo)
+#    stg     → Staging / Pruebas QA
+#    preprod → Pre-Producción / Validación final
+#    main    → Producción (fuente de verdad)
+# ============================================================
+
+name: Validar Rama de Origen del PR
+
+on:
+  pull_request:
+    branches:
+      - dev
+      - stg
+      - preprod
+      - main
+    types:
+      - opened
+      - edited
+      - synchronize
+      - reopened
+
+jobs:
+  validar-origen:
+    name: Validar Rama de Origen del PR
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Verificar rama de origen
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const ramaOrigen  = context.payload.pull_request.head.ref;
+            const ramaDestino = context.payload.pull_request.base.ref;
+            const numeroPR    = context.issue.number;
+
+            // ----------------------------------------------------------------
+            // Reglas de origen permitido por rama destino
+            // ----------------------------------------------------------------
+            const reglas = {
+              dev: {
+                descripcion: 'Integración — desarrollo activo',
+                origenesValidos: [
+                  /^feat\/.+/,
+                  /^fix\/.+/,
+                  /^hotfix\/.+/,
+                  /^revert\/.+/,
+                  /^refactor\/.+/,
+                  /^release\/.+/,
+                  /^chore\/.+/,
+                ],
+                ejemplos: [
+                  '`feat/S2-DASH-107-graficas`',
+                  '`fix/S1-API-031-respuesta-nula`',
+                  '`chore/S2-DEP-003-actualizar-dependencias`',
+                ],
+                flujo: '`feat/*` / `fix/*` / `chore/*` / ... → **dev** → stg → preprod → main',
+              },
+              stg: {
+                descripcion: 'Staging / Pruebas QA',
+                origenesValidos: [
+                  /^dev$/,
+                ],
+                ejemplos: ['`dev`'],
+                flujo: 'feat/* → **dev** → **stg** → preprod → main',
+              },
+              preprod: {
+                descripcion: 'Pre-Producción / Validación final',
+                origenesValidos: [
+                  /^stg$/,
+                ],
+                ejemplos: ['`stg`'],
+                flujo: 'feat/* → dev → **stg** → **preprod** → main',
+              },
+              main: {
+                descripcion: 'Producción — fuente de verdad',
+                origenesValidos: [
+                  /^preprod$/,
+                  /^hotfix\/.+/,
+                ],
+                ejemplos: ['`preprod`', '`hotfix/nombre-del-fix`'],
+                flujo: 'feat/* → dev → stg → **preprod** → **main**  (o `hotfix/*` → **main** en emergencias)',
+              },
+            };
+
+            // ----------------------------------------------------------------
+            // Si la rama destino no está en las reglas, no hacer nada
+            // (puede ser una rama de feature que recibe un PR interno)
+            // ----------------------------------------------------------------
+            if (!reglas[ramaDestino]) {
+              console.log(`Rama destino "${ramaDestino}" no requiere validación de origen.`);
+              return;
+            }
+
+            const regla    = reglas[ramaDestino];
+            const esValido = regla.origenesValidos.some(patron => patron.test(ramaOrigen));
+
+            // ----------------------------------------------------------------
+            // Caso exitoso
+            // ----------------------------------------------------------------
+            if (esValido) {
+              console.log(`✅ Origen válido: "${ramaOrigen}" → "${ramaDestino}"`);
+
+              await core.summary
+                .addHeading('✅ Rama de origen válida', 3)
+                .addTable([
+                  [{data: 'Campo',           header: true}, {data: 'Valor',                       header: true}],
+                  ['Rama origen',            `\`${ramaOrigen}\``],
+                  ['Rama destino',           `\`${ramaDestino}\``],
+                  ['Descripción del destino', regla.descripcion],
+                ])
+                .write();
+              return;
+            }
+
+            // ----------------------------------------------------------------
+            // Caso de error — publicar comentario y fallar el check
+            // ----------------------------------------------------------------
+            const origenesFormateados = regla.ejemplos.join(', ');
+
+            const cuerpoComentario = [
+              '## ❌ Rama de origen incorrecta',
+              '',
+              `Estás intentando mergear \`${ramaOrigen}\` → \`${ramaDestino}\`, pero esta combinación no está permitida.`,
+              '',
+              `### Orígenes permitidos para \`${ramaDestino}\` (${regla.descripcion})`,
+              '',
+              `${origenesFormateados}`,
+              '',
+              '### Flujo correcto de promoción',
+              '',
+              `\`\`\``,
+              regla.flujo,
+              `\`\`\``,
+              '',
+              '### ¿Cómo corregirlo?',
+              '',
+              `Si quieres integrar cambios a \`${ramaDestino}\`, primero asegúrate de que los cambios`,
+              `hayan pasado por todas las etapas anteriores del flujo.`,
+              '',
+              `Si tu rama es de trabajo (feat/*, fix/*, etc.), el destino correcto es \`dev\`, no \`${ramaDestino}\`.`,
+              '',
+              '---',
+              `> **Rama origen:** \`${ramaOrigen}\``,
+              `> **Rama destino:** \`${ramaDestino}\``,
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              issue_number: numeroPR,
+              owner:        context.repo.owner,
+              repo:         context.repo.repo,
+              body:         cuerpoComentario,
+            });
+
+            core.setFailed(
+              `Origen no permitido: "${ramaOrigen}" no puede mergearse a "${ramaDestino}". ` +
+              `Orígenes válidos para "${ramaDestino}": ${regla.ejemplos.join(', ')}`
+            );
